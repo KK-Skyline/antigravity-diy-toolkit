@@ -171,6 +171,13 @@ try {
     assert.equal(tx.inspectArchive(integrationLive).localized, true);
     const localizedHash = hash(integrationLive);
     const releaseIntegration = tx.acquireLock(integrationResources);
+    const engineConfig = path.join(path.dirname(enginePath), 'wallpaper_config.json');
+    const configBeforeBusy = fs.existsSync(engineConfig) ? fs.readFileSync(engineConfig) : null;
+    const busyApply = spawnSync(process.execPath, [enginePath, '--wallpaper', '--hub-config',
+        JSON.stringify({ workshopId: '123', opacity: 0.2 }), '--install-dir', integration], { env, encoding: 'utf8' });
+    assert.equal(busyApply.status, 75, busyApply.stderr);
+    assert.match(busyApply.stderr, /ASAR_BUSY/);
+    assert.deepEqual(fs.existsSync(engineConfig) ? fs.readFileSync(engineConfig) : null, configBeforeBusy);
     const busyRun = spawnSync(process.execPath, [enginePath, '--huifu', '--install-dir', integration], { env, encoding: 'utf8' });
     releaseIntegration();
     assert.equal(busyRun.status, 75, busyRun.stderr);

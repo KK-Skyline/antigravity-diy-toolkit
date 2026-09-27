@@ -1838,6 +1838,7 @@ async function main() {
     let huifu = false;
     let manualDir = "";
     let noKill = true; // 默认不主动杀死客户端，防止中断用户当前的智能体配对会话
+    let hubConfig = null;
 
     const args = process.argv.slice(2);
     for (let i = 0; i < args.length; i++) {
@@ -1852,23 +1853,27 @@ async function main() {
             noKill = false;
         } else if (args[i] === '--brand-title') {
             i++;
+        } else if (args[i] === '--hub-config') {
+            if (hubConfig || !args[i + 1] || args[i + 1].length > 2048) throw new Error('Invalid Hub config');
+            const candidate = JSON.parse(args[++i]);
+            const ranges = { opacity: [0.15, 1], blur: [0, 25], brightness: [50, 150],
+                contrast: [50, 160], saturate: [30, 180], darken: [0, 50] };
+            if (!USE_WALLPAPER || huifu || !candidate || typeof candidate !== 'object' || Array.isArray(candidate) ||
+                typeof candidate.workshopId !== 'string' || !/^\d{1,20}$/.test(candidate.workshopId) ||
+                Object.keys(candidate).some(key => key !== 'workshopId' && key !== 'flipHorizontal' && !ranges[key]) ||
+                (candidate.flipHorizontal !== undefined && typeof candidate.flipHorizontal !== 'boolean') ||
+                Object.entries(ranges).some(([key, [min, max]]) => candidate[key] !== undefined &&
+                    (typeof candidate[key] !== 'number' || !Number.isFinite(candidate[key]) ||
+                        candidate[key] < min || candidate[key] > max))) throw new Error('Invalid Hub config');
+            hubConfig = candidate;
         }
     }
+    if (hubConfig && huifu) throw new Error('Invalid Hub config');
 
     // 1. 探测路径
     const installDir = detectInstallationDir(manualDir);
     
-    // 2. 检测客户端是否正在运行，并根据参数决定是否关闭以解除文件锁定
-    wasAppRunning = checkIfAppIsRunning();
-    if (wasAppRunning && noKill) {
-        throw new Error('Antigravity 正在运行；请先手动关闭，或明确使用 --close-app。');
-    }
-    if (wasAppRunning) {
-        closeAntigravityProcesses();
-        if (checkIfAppIsRunning()) throw new Error('Antigravity 未能关闭，已停止写入。');
-    }
-
-    // 3. 找到 resources 资源目录
+    // 2. 找到 resources 资源目录
     let resourcesDir = "";
     if (fs.existsSync(path.join(installDir, "resources"))) {
         resourcesDir = path.join(installDir, "resources");
@@ -1891,17 +1896,35 @@ async function main() {
 
     ensureWritePermission(resourcesDir);
 
-    // 4. 根据架构执行
+    // 3. 根据架构执行
     const asarPath = path.join(resourcesDir, "app.asar");
     const isV2 = fs.existsSync(asarPath) || fs.existsSync(`${asarPath}.rollback`) ||
         fs.existsSync(path.join(resourcesDir, 'app.asar.baseline.json'));
     let success = false;
-    const transaction = isV2 ? await import('./asar_transaction.mjs') : null;
-    const releaseLock = isV2 ? transaction.acquireLock(resourcesDir) : null;
+    const transaction = isV2 || hubConfig ? await import('./asar_transaction.mjs') : null;
+    const releaseLock = transaction ? transaction.acquireLock(resourcesDir) : null;
     try {
+    wasAppRunning = checkIfAppIsRunning();
+    if (wasAppRunning && noKill) {
+        throw new Error('Antigravity 正在运行；请先手动关闭，或明确使用 --close-app。');
+    }
+    if (wasAppRunning) {
+        closeAntigravityProcesses();
+        if (checkIfAppIsRunning()) throw new Error('Antigravity 未能关闭，已停止写入。');
+    }
     if (isV2) {
         if (checkIfAppIsRunning()) throw new Error('Antigravity 在锁定后重新启动，已停止写入。');
         transaction.recover(resourcesDir, { rescueSidecar: huifu });
+    }
+    if (hubConfig) {
+        const configFile = path.join(__dirname, 'wallpaper_config.json');
+        let current = {};
+        if (fs.existsSync(configFile)) {
+            try { current = JSON.parse(fs.readFileSync(configFile, 'utf8')); }
+            catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+        }
+        if (!current || typeof current !== 'object' || Array.isArray(current)) current = {};
+        fs.writeFileSync(configFile, JSON.stringify({ ...current, ...hubConfig }, null, 2), 'utf8');
     }
     if (huifu) {
         console.log("====== 正在卸载中文汉化，恢复官方原版 ======");

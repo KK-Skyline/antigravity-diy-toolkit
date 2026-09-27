@@ -277,23 +277,14 @@ const server = http.createServer((req, res) => {
                 }
                 applyInFlight = true;
                 ownsApplyLock = true;
-                const current = readConfig();
-                
-                current.workshopId = id;
-                if (typeof data.opacity === 'number') current.opacity = data.opacity;
-                if (typeof data.blur === 'number') current.blur = data.blur;
-                if (typeof data.brightness === 'number') current.brightness = data.brightness;
-                if (typeof data.contrast === 'number') current.contrast = data.contrast;
-                if (typeof data.saturate === 'number') current.saturate = data.saturate;
-                if (typeof data.darken === 'number') current.darken = data.darken;
-                if (typeof data.flipHorizontal === 'boolean') current.flipHorizontal = data.flipHorizontal;
-
-                // 写入配置文件
-                fs.writeFileSync(CFG_FILE, JSON.stringify(current, null, 2), 'utf8');
+                const patch = { workshopId: id };
+                for (const key of [...Object.keys(NUMBER_RANGES), 'flipHorizontal']) {
+                    if (data[key] !== undefined) patch[key] = data[key];
+                }
 
                 // 执行注入打包引擎
                 const scriptPath = path.join(__dirname, 'localization_engine.js');
-                const args = [scriptPath, '--wallpaper'];
+                const args = [scriptPath, '--wallpaper', '--hub-config', JSON.stringify(patch)];
                 args.push(data.autoRestart ? '--close-app' : '--no-kill');
                 console.log('[Hub] 正在执行应用指令:', process.execPath, args);
                 
@@ -313,7 +304,7 @@ const server = http.createServer((req, res) => {
                     res.end(JSON.stringify({
                         success: true,
                         message: '壁纸应用成功！' + (data.autoRestart ? ' 客户端正在自动重启...' : ' 请手动重启客户端以生效。'),
-                        workshopId: current.workshopId
+                        workshopId: id
                     }));
                 });
             } catch(e) {

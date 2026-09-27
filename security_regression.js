@@ -13,6 +13,7 @@ const realConfigBefore = hash(realConfig);
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'antigravity-hub-test-'));
 const fixtureConfig = path.join(fixture, 'wallpaper_config.json');
 const calls = path.join(fixture, 'localizer.calls');
+const appliedConfigs = path.join(fixture, 'localizer.applied');
 const failFlag = path.join(fixture, 'localizer.fail');
 const busyFlag = path.join(fixture, 'localizer.busy');
 const exit75Flag = path.join(fixture, 'localizer.exit75');
@@ -34,7 +35,14 @@ function prepareFixture() {
         "const fs = require('fs');",
         "if (fs.existsSync(process.env.HUB_STUB_BUSY)) { process.stderr.write('ASAR_BUSY\\n'); process.exit(75); }",
         "if (fs.existsSync(process.env.HUB_STUB_EXIT75)) process.exit(75);",
-        "fs.appendFileSync(process.env.HUB_STUB_CALLS, JSON.stringify(process.argv.slice(2)) + '\\n');",
+        "const args = process.argv.slice(2);",
+        "const configArg = args.indexOf('--hub-config');",
+        "if (configArg < 0) throw new Error('Missing locked Hub config');",
+        "const configFile = require('path').join(__dirname, 'wallpaper_config.json');",
+        "const next = { ...JSON.parse(fs.readFileSync(configFile, 'utf8')), ...JSON.parse(args[configArg + 1]) };",
+        "fs.writeFileSync(configFile, JSON.stringify(next, null, 2));",
+        "fs.appendFileSync(process.env.HUB_STUB_CALLS, JSON.stringify(args.filter((_, i) => i !== configArg && i !== configArg + 1)) + '\\n');",
+        "fs.appendFileSync(process.env.HUB_STUB_APPLIED, JSON.stringify(next) + '\\n');",
         "if (fs.existsSync(process.env.HUB_STUB_WAIT)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 350);",
         "if (fs.existsSync(process.env.HUB_STUB_FAIL)) {",
         "    process.stderr.write('PRIVATE_LOCALIZER_DETAILS\\n');",
@@ -47,7 +55,7 @@ function prepareFixture() {
 function spawnHub() {
     const child = spawn(process.execPath, [path.join(fixture, 'wallpaper_hub_server.js')], {
         cwd: fixture, stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, HUB_STUB_CALLS: calls, HUB_STUB_FAIL: failFlag,
+        env: { ...process.env, HUB_STUB_CALLS: calls, HUB_STUB_APPLIED: appliedConfigs, HUB_STUB_FAIL: failFlag,
             HUB_STUB_BUSY: busyFlag, HUB_STUB_EXIT75: exit75Flag, HUB_STUB_WAIT: waitFlag }
     });
     child.output = { stdout: '', stderr: '' };
@@ -145,9 +153,11 @@ async function main() {
     assert.strictEqual(hash(fixtureConfig), fixtureConfigBefore);
     assert.strictEqual(fs.existsSync(calls), false, 'Invalid requests must not invoke the localizer');
 
-    assert.strictEqual((await post('/api/apply', { workshopId: '123', autoRestart: false })).status, 200);
+    assert.strictEqual((await post('/api/apply', { workshopId: '123', opacity: 0.4, autoRestart: false })).status, 200);
     assert.deepStrictEqual(JSON.parse(fs.readFileSync(calls, 'utf8').trim()), ['--wallpaper', '--no-kill']);
     assert.strictEqual(JSON.parse(fs.readFileSync(fixtureConfig, 'utf8')).workshopId, '123');
+    assert.strictEqual(JSON.parse(fs.readFileSync(fixtureConfig, 'utf8')).opacity, 0.4);
+    assert.strictEqual(JSON.parse(fs.readFileSync(appliedConfigs, 'utf8').trim()).opacity, 0.4);
 
     fs.writeFileSync(failFlag, '');
     const failedApply = await post('/api/apply', { workshopId: '123', autoRestart: false });
@@ -170,10 +180,12 @@ async function main() {
 
     fs.unlinkSync(failFlag);
     fs.writeFileSync(busyFlag, '');
-    const crossProcessBusy = await post('/api/apply', { workshopId: '123', autoRestart: false });
+    const configBeforeBusy = fs.readFileSync(fixtureConfig);
+    const crossProcessBusy = await post('/api/apply', { workshopId: '123', opacity: 0.2, autoRestart: false });
     assert.strictEqual(crossProcessBusy.status, 409);
     assert.deepStrictEqual(JSON.parse(crossProcessBusy.text),
         { success: false, code: 'APPLY_BUSY', error: '已有应用任务正在执行。' });
+    assert.deepStrictEqual(fs.readFileSync(fixtureConfig), configBeforeBusy, 'Busy apply mutated config');
     assert.strictEqual(fs.readFileSync(calls, 'utf8').trim().split('\n').length, 2);
     fs.unlinkSync(busyFlag);
     fs.writeFileSync(exit75Flag, '');
