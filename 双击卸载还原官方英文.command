@@ -11,7 +11,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 echo "====== 正在还原 macOS 版 Antigravity 官方英文 ======"
-node localization_engine.js --huifu --install-dir /Applications/Antigravity.app
+node localization_engine.js --huifu --install-dir /Applications/Antigravity.app "$@"
 
 if [ $? -ne 0 ]; then
     echo ""

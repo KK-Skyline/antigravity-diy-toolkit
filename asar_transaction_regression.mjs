@@ -425,6 +425,32 @@ cp.execFileSync = (command, args) => {
     assert.equal(macCalls().filter(call => call.command === 'pkill').length, 1);
     assert.ok(macCalls().filter(call => ['pgrep', 'pkill'].includes(call.command))
         .every(call => JSON.stringify(call.args) === JSON.stringify(['-x', 'Antigravity'])));
+    const commandCopy = path.join(fixture, 'command-copy');
+    const fakeNodeBin = path.join(fixture, 'command-bin');
+    fs.mkdirSync(commandCopy);
+    fs.mkdirSync(fakeNodeBin);
+    fs.writeFileSync(path.join(fakeNodeBin, 'node'), '#!/bin/sh\nprintf "%s\\n" "$@" > "$CAPTURE_FILE"\n',
+        { mode: 0o755 });
+    const forwarded = ['--close-app', '--confirm-unverified-baseline', 'argument with spaces'];
+    for (const [script, expected] of [
+        ['双击安装中文汉化.command', ['localization_engine.js', '--brand-title', 'english']],
+        ['双击安装繁体中文.command', ['localization_engine.js', '--tw', '--brand-title', 'english']],
+        ['双击卸载还原官方英文.command', ['localization_engine.js', '--huifu']]
+    ]) {
+        const source = fs.readFileSync(new URL(script, import.meta.url), 'utf8');
+        assert.match(source, /exec sudo bash "\$0" "\$@"/);
+        assert.ok(source.includes('if [ "$EUID" -ne 0 ]; then'));
+        const copied = path.join(commandCopy, script);
+        fs.writeFileSync(copied, source.replace('if [ "$EUID" -ne 0 ]; then', 'if false; then'));
+        const capture = path.join(fixture, `${script}.argv`);
+        const run = spawnSync('bash', [copied, ...forwarded], {
+            env: { ...env, PATH: `${fakeNodeBin}${path.delimiter}${process.env.PATH}`, CAPTURE_FILE: capture },
+            input: '\n\n', encoding: 'utf8', timeout: 5000
+        });
+        assert.equal(run.status, 0, run.stderr);
+        assert.deepEqual(fs.readFileSync(capture, 'utf8').trimEnd().split('\n'),
+            [...expected, '--install-dir', '/Applications/Antigravity.app', ...forwarded]);
+    }
     }
     fs.rmSync(`${integrationLive}.unpacked`, { recursive: true });
     const rescueRun = spawnSync(process.execPath, [enginePath, '--huifu', '--install-dir', integration], { env, encoding: 'utf8' });
@@ -737,7 +763,7 @@ cp.execFileSync = (command, args) => {
         assert.equal(fs.readFileSync(captured, 'utf8'), specialDir);
         assert.equal(fs.existsSync(marker), false);
     }
-    const macCheck = process.platform === 'win32' ? 'Darwin shim skipped on Windows' : 'Darwin process matching';
+    const macCheck = process.platform === 'win32' ? 'Darwin shim skipped on Windows' : 'Darwin process matching and .command argv';
     console.log(`asar transaction regression: PASS (metadata digest, no-kill, ${macCheck}, ENOSPC, selective unpack, config/recovery, dead guard, busy 75, sidecar rescue)`);
 } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
