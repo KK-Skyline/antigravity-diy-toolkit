@@ -138,9 +138,16 @@ function restartAntigravityClient() {
         child_process.execSync('taskkill /F /IM Antigravity.exe', { windowsHide: true });
     } catch(e) {}
     setTimeout(() => {
-        const exe = 'C:\\Users\\Lenovo\\AppData\\Local\\Programs\\antigravity\\Antigravity.exe';
-        if (fs.existsSync(exe)) {
-            child_process.spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
+        const candidates = [
+            process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Programs', 'antigravity', 'Antigravity.exe') : null,
+            'C:\\Program Files\\Antigravity\\Antigravity.exe',
+            'D:\\Programs\\Antigravity\\Antigravity.exe',
+        ].filter(Boolean);
+        for (const exe of candidates) {
+            if (fs.existsSync(exe)) {
+                child_process.spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
+                break;
+            }
         }
     }, 800);
 }
