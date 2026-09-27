@@ -66,7 +66,7 @@
 ### 1. 下载与解压
 - 直接 Clone 本仓库或下载 ZIP 包并解压至任意目录：
   ```bash
-  git clone https://github.com/您的用户名/antigravity-toolkit.git
+  git clone https://github.com/KK-Skyline/antigravity-diy-toolkit.git
   ```
 
 ### 2. 启动壁纸选择库 (Wallpaper Hub)
