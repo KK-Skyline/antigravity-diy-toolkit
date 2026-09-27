@@ -1204,7 +1204,10 @@ function checkIfAppIsRunning() {
         return stdout.split(/\r?\n/).some(line => /^Antigravity\.exe\s/i.test(line.trim()));
     }
     if (process.platform === 'darwin') {
-        try { return child_process.execFileSync('pgrep', ['-f', 'Antigravity'], { encoding: 'utf8' }).trim().length > 0; }
+        try {
+            return child_process.execFileSync('pgrep', ['-x', 'Antigravity'], { encoding: 'utf8' })
+                .trim().split(/\s+/).some(pid => Number(pid) > 0 && Number(pid) !== process.pid);
+        }
         catch (error) { if (error.status !== 1) throw error; }
     }
     return false;
@@ -1216,7 +1219,7 @@ function closeAntigravityProcesses() {
         if (process.platform === 'win32') {
             child_process.execFileSync('taskkill', ['/f', '/im', 'Antigravity.exe', '/t'], { stdio: 'ignore', windowsHide: true });
         } else if (process.platform === 'darwin') {
-            child_process.execFileSync('pkill', ['-f', 'Antigravity'], { stdio: 'ignore' });
+            child_process.execFileSync('pkill', ['-x', 'Antigravity'], { stdio: 'ignore' });
         }
     } catch (e) {
         // ignore

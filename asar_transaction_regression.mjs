@@ -357,6 +357,75 @@ cp.execFileSync = (command, args, options) => {
             configBeforeRunningReject);
         assert.equal(fs.existsSync(taskkillMarker), false);
     }
+    if (process.platform !== 'win32') {
+    const macApp = path.join(fixture, 'Antigravity.app');
+    fs.cpSync(integration, macApp, { recursive: true });
+    const macResources = path.join(macApp, 'resources');
+    const macLive = path.join(macResources, 'app.asar');
+    const macState = path.join(fixture, 'mac-client-state.json');
+    const macLog = path.join(fixture, 'mac-process-calls.jsonl');
+    const macSelfKill = path.join(fixture, 'mac-self-kill');
+    const macShim = path.join(fixture, 'mac-process-shim.cjs');
+    fs.writeFileSync(macState, JSON.stringify({ running: false }));
+    fs.writeFileSync(macShim, `Object.defineProperty(process, 'platform', { value: 'darwin' });
+const fs = require('node:fs');
+const cp = require('node:child_process');
+cp.execFileSync = (command, args) => {
+    fs.appendFileSync(process.env.MAC_TEST_LOG, JSON.stringify({ command, args }) + '\\n');
+    if (command === 'pgrep') {
+        if (args.includes('-f')) return String(process.pid) + '\\n';
+        const state = JSON.parse(fs.readFileSync(process.env.MAC_TEST_STATE));
+        if (args.includes('-x') && state.self) return String(process.pid) + '\\n';
+        if (args.includes('-x') && state.running) return '424242\\n';
+        throw Object.assign(Error('no process'), { status: 1 });
+    }
+    if (command === 'pkill') {
+        if (args.includes('-f')) { fs.writeFileSync(${JSON.stringify(macSelfKill)}, 'matched installer'); process.exit(98); }
+        fs.writeFileSync(process.env.MAC_TEST_STATE, JSON.stringify({ running: false }));
+        return '';
+    }
+    if (['xattr', 'codesign', 'open'].includes(command)) return '';
+    throw Error('unexpected external command: ' + command);
+};`);
+    const macEnv = { ...env, MAC_TEST_STATE: macState, MAC_TEST_LOG: macLog };
+    const runMac = args => spawnSync(process.execPath,
+        ['--require', macShim, enginePath, ...args, '--install-dir', macApp],
+        { env: macEnv, encoding: 'utf8' });
+    const macCalls = () => fs.readFileSync(macLog, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
+    for (const operation of [[], ['--tw'], ['--huifu']]) {
+        const run = runMac(operation);
+        assert.equal(run.status, 0, run.stderr);
+    }
+    assert.equal(hash(macLive), originalHash);
+    assert.equal(macCalls().some(call => call.command === 'pkill'), false);
+    fs.writeFileSync(macState, JSON.stringify({ self: true }));
+    const selfOnly = runMac(['--huifu']);
+    assert.equal(selfOnly.status, 0, selfOnly.stderr);
+    assert.equal(macCalls().some(call => call.command === 'pkill'), false);
+    fs.writeFileSync(macState, JSON.stringify({ running: true }));
+    const beforeMacNoKill = snapshot(macResources);
+    const configBeforeMacNoKill = fs.existsSync(engineConfig) ? fs.readFileSync(engineConfig) : null;
+    for (const operation of [[], ['--huifu']]) {
+        const rejected = runMac([...operation, '--no-kill']);
+        assert.equal(rejected.status, 1, rejected.stderr);
+        assert.match(rejected.stderr, /正在运行/);
+        assert.deepEqual(snapshot(macResources), beforeMacNoKill);
+        assert.deepEqual(fs.existsSync(engineConfig) ? fs.readFileSync(engineConfig) : null,
+            configBeforeMacNoKill);
+    }
+    assert.equal(macCalls().some(call => call.command === 'pkill'), false);
+    const closed = runMac(['--close-app']);
+    assert.equal(closed.status, 0, closed.stderr);
+    assert.equal(tx.inspectArchive(macLive).localized, true);
+    assert.equal(JSON.parse(fs.readFileSync(macState)).running, false);
+    assert.equal(fs.existsSync(macSelfKill), false);
+    assert.equal(macCalls().filter(call => call.command === 'pkill').length, 1);
+    const unrelatedOnly = runMac(['--huifu', '--close-app']);
+    assert.equal(unrelatedOnly.status, 0, unrelatedOnly.stderr);
+    assert.equal(macCalls().filter(call => call.command === 'pkill').length, 1);
+    assert.ok(macCalls().filter(call => ['pgrep', 'pkill'].includes(call.command))
+        .every(call => JSON.stringify(call.args) === JSON.stringify(['-x', 'Antigravity'])));
+    }
     fs.rmSync(`${integrationLive}.unpacked`, { recursive: true });
     const rescueRun = spawnSync(process.execPath, [enginePath, '--huifu', '--install-dir', integration], { env, encoding: 'utf8' });
     assert.equal(rescueRun.status, 0, rescueRun.stderr);
@@ -668,7 +737,8 @@ cp.execFileSync = (command, args, options) => {
         assert.equal(fs.readFileSync(captured, 'utf8'), specialDir);
         assert.equal(fs.existsSync(marker), false);
     }
-    console.log('asar transaction regression: PASS (metadata digest, no-kill, ENOSPC, selective unpack, config/recovery, dead guard, busy 75, sidecar rescue)');
+    const macCheck = process.platform === 'win32' ? 'Darwin shim skipped on Windows' : 'Darwin process matching';
+    console.log(`asar transaction regression: PASS (metadata digest, no-kill, ${macCheck}, ENOSPC, selective unpack, config/recovery, dead guard, busy 75, sidecar rescue)`);
 } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
 }
