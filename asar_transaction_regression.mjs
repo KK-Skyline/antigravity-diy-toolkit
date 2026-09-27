@@ -7,6 +7,7 @@ import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as asar from '@electron/asar';
 import { escape as escapeGlob } from 'minimatch';
+import { wrappedFs as asarFs } from './node_modules/@electron/asar/lib/wrapped-fs.js';
 import * as tx from './asar_transaction.mjs';
 
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'antigravity-asar-test-'));
@@ -14,6 +15,7 @@ const source = path.join(fixture, 'source');
 const resources = path.join(fixture, 'resources');
 const live = path.join(resources, 'app.asar');
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const enospc = () => Object.assign(new Error('simulated disk full'), { code: 'ENOSPC' });
 const snapshot = root => {
     const entries = [];
     const visit = (dir, prefix = '') => {
@@ -121,7 +123,9 @@ try {
     fs.writeFileSync(`${backup}.json`, JSON.stringify(legacyMetadata));
     assert.throws(() => tx.restore(resources), /explicit confirmation/);
     tx.restore(resources, { confirmUnverified: true });
-    assert.equal(JSON.parse(fs.readFileSync(path.join(resources, 'app.asar.baseline.json'))).userConfirmedUnverified, true);
+    const pointerFile = path.join(resources, 'app.asar.baseline.json');
+    assert.equal(JSON.parse(fs.readFileSync(pointerFile)).userConfirmedUnverified, true);
+    assert.match(JSON.parse(fs.readFileSync(pointerFile)).metadataSha256, /^[a-f0-9]{64}$/);
     assert.equal(JSON.parse(fs.readFileSync(`${backup}.json`)).source, 'user-confirmed-unverified-live');
     tx.restore(resources);
     const confirmedMetadata = fs.readFileSync(`${backup}.json`);
@@ -129,7 +133,9 @@ try {
     const malformedMetadata = [
         { ...metaObject, sha256: '0'.repeat(64) }, { ...metaObject, size: 1 },
         { ...metaObject, version: 'forged' }, { ...metaObject, unpackedSha256: '0'.repeat(64) },
-        { ...metaObject, source: 'forged-official-source' }, { ...metaObject, extra: true },
+        { ...metaObject, source: 'forged-official-source' },
+        { ...metaObject, source: 'user-confirmed-unverified-legacy-pair' },
+        { ...metaObject, extra: true },
         ...Object.keys(metaObject).map(key => {
             const copy = { ...metaObject };
             delete copy[key];
@@ -144,8 +150,10 @@ try {
         assert.deepEqual(snapshot(resources), beforeRejected);
     }
     fs.writeFileSync(`${backup}.json`, confirmedMetadata);
+    const confirmedPointer = JSON.parse(fs.readFileSync(pointerFile));
     for (const candidate of [
-        { sha256: backupHash, userConfirmedUnverified: true, extra: true },
+        { ...confirmedPointer, metadataSha256: '0'.repeat(64) },
+        { ...confirmedPointer, extra: true },
         { userConfirmedUnverified: true },
         { sha256: backupHash, userConfirmedUnverified: 'true' },
         { sha256: backupHash, userConfirmedUnverified: false }
@@ -156,6 +164,12 @@ try {
         assert.throws(() => tx.restore(resources));
         assert.deepEqual(snapshot(resources), beforeRejected);
     }
+    fs.writeFileSync(pointerFile, JSON.stringify({ sha256: backupHash, userConfirmedUnverified: true }));
+    const beforeLegacyPointerReject = snapshot(resources);
+    assert.throws(() => tx.restore(resources), /explicit confirmation/);
+    assert.deepEqual(snapshot(resources), beforeLegacyPointerReject);
+    tx.restore(resources, { confirmUnverified: true });
+    assert.match(JSON.parse(fs.readFileSync(pointerFile)).metadataSha256, /^[a-f0-9]{64}$/);
     fs.writeFileSync(path.join(resources, 'app.asar.baseline.json'),
         JSON.stringify({ sha256: '0'.repeat(64), userConfirmedUnverified: true }));
     assert.throws(() => tx.restore(resources));
@@ -193,6 +207,13 @@ try {
     assert.equal(hash(importedLegacy), backupHash);
     assert.equal(JSON.parse(fs.readFileSync(`${importedLegacy}.json`, 'utf8')).source,
         'user-confirmed-unverified-legacy-pair');
+    const legacyMeta = fs.readFileSync(`${importedLegacy}.json`);
+    fs.writeFileSync(`${importedLegacy}.json`, JSON.stringify({ ...JSON.parse(legacyMeta),
+        source: 'user-confirmed-unverified-live' }));
+    const beforeLegacySourceReject = snapshot(legacy);
+    assert.throws(() => tx.restore(legacy), /metadata digest mismatch/);
+    assert.deepEqual(snapshot(legacy), beforeLegacySourceReject);
+    fs.writeFileSync(`${importedLegacy}.json`, legacyMeta);
 
     const badExtract = path.join(fixture, 'bad-extracted');
     fs.cpSync(extracted, badExtract, { recursive: true });
@@ -313,6 +334,29 @@ try {
     assert.equal(restoreRun.status, 0, restoreRun.stderr);
     assert.equal(hash(integrationLive), originalHash);
     assert.ok(fs.existsSync(path.join(integrationResources, 'app.asar.baseline.json')));
+    const runningShim = path.join(fixture, 'running-client.cjs');
+    const taskkillMarker = path.join(fixture, 'unexpected-taskkill');
+    fs.writeFileSync(runningShim, `Object.defineProperty(process, 'platform', { value: 'win32' });
+const cp = require('node:child_process');
+const real = cp.execFileSync;
+cp.execFileSync = (command, args, options) => {
+    if (command === 'tasklist') return 'Antigravity.exe 123 Console 1 1000 K';
+    if (command === 'taskkill') { require('node:fs').writeFileSync(${JSON.stringify(taskkillMarker)}, 'called'); throw Error('unexpected taskkill'); }
+    return real(command, args, options);
+};`);
+    const beforeRunningReject = snapshot(integrationResources);
+    const configBeforeRunningReject = fs.existsSync(engineConfig) ? fs.readFileSync(engineConfig) : null;
+    for (const operation of [[], ['--huifu']]) {
+        const rejected = spawnSync(process.execPath,
+            ['--require', runningShim, enginePath, ...operation, '--no-kill', '--install-dir', integration],
+            { env, encoding: 'utf8' });
+        assert.equal(rejected.status, 1, rejected.stderr);
+        assert.match(rejected.stderr, /正在运行/);
+        assert.deepEqual(snapshot(integrationResources), beforeRunningReject);
+        assert.deepEqual(fs.existsSync(engineConfig) ? fs.readFileSync(engineConfig) : null,
+            configBeforeRunningReject);
+        assert.equal(fs.existsSync(taskkillMarker), false);
+    }
     fs.rmSync(`${integrationLive}.unpacked`, { recursive: true });
     const rescueRun = spawnSync(process.execPath, [enginePath, '--huifu', '--install-dir', integration], { env, encoding: 'utf8' });
     assert.equal(rescueRun.status, 0, rescueRun.stderr);
@@ -502,6 +546,32 @@ try {
     assert.equal(JSON.parse(fs.readFileSync(mixedConfig)).opacity, 0.2);
     const committedMixedHash = hash(mixedLive);
     const committedConfig = fs.readFileSync(mixedConfig);
+    const beforeDiskFull = snapshot(mixedResources);
+    const writeMixed = fs.writeFileSync;
+    fs.writeFileSync = (file, ...args) => {
+        if (String(file).startsWith(`${mixedConfig}.new-`)) throw enospc();
+        return writeMixed(file, ...args);
+    };
+    try {
+        await assert.rejects(tx.packAndReplace(mixedResources, mixedExtracted, mixedBackup, mixedConfigPlan(0.3)),
+            { code: 'ENOSPC' });
+    } finally { fs.writeFileSync = writeMixed; }
+    assert.deepEqual(snapshot(mixedResources), beforeDiskFull);
+    assert.deepEqual(fs.readFileSync(mixedConfig), committedConfig);
+    const createAsarStream = asarFs.createWriteStream;
+    asarFs.createWriteStream = (file, ...args) => {
+        if (String(file).startsWith(path.join(mixedResources, 'app.asar.new-'))) {
+            fs.writeFileSync(file, 'partial ASAR');
+            throw enospc();
+        }
+        return createAsarStream(file, ...args);
+    };
+    try {
+        await assert.rejects(tx.packAndReplace(mixedResources, mixedExtracted, mixedBackup, mixedConfigPlan(0.3)),
+            { code: 'ENOSPC' });
+    } finally { asarFs.createWriteStream = createAsarStream; }
+    assert.deepEqual(snapshot(mixedResources), beforeDiskFull);
+    assert.deepEqual(fs.readFileSync(mixedConfig), committedConfig);
     const brokenMixed = path.join(mixed, 'broken');
     fs.cpSync(mixedExtracted, brokenMixed, { recursive: true });
     fs.unlinkSync(path.join(brokenMixed, 'dist', 'preload.js'));
@@ -511,25 +581,25 @@ try {
     const renameMixed = fs.renameSync;
     fs.renameSync = (from, to) => {
         if (from.startsWith(path.join(mixedResources, 'app.asar.new-')) && to === mixedLive) {
-            throw new Error('simulated ASAR commit failure');
+            throw enospc();
         }
         return renameMixed(from, to);
     };
     try {
         await assert.rejects(tx.packAndReplace(mixedResources, mixedExtracted, mixedBackup, mixedConfigPlan(0.3)),
-            /simulated ASAR commit failure/);
+            { code: 'ENOSPC' });
     } finally { fs.renameSync = renameMixed; }
-    assert.equal(hash(mixedLive), committedMixedHash);
+    assert.deepEqual(snapshot(mixedResources), beforeDiskFull);
     assert.deepEqual(fs.readFileSync(mixedConfig), committedConfig);
     fs.renameSync = (from, to) => {
-        if (to === mixedConfig && from.includes('.new-')) throw new Error('simulated config commit failure');
+        if (to === mixedConfig && from.includes('.new-')) throw enospc();
         return renameMixed(from, to);
     };
     try {
         await assert.rejects(tx.packAndReplace(mixedResources, mixedExtracted, mixedBackup, mixedConfigPlan(0.3)),
-            /simulated config commit failure/);
+            { code: 'ENOSPC' });
     } finally { fs.renameSync = renameMixed; }
-    assert.equal(hash(mixedLive), committedMixedHash);
+    assert.deepEqual(snapshot(mixedResources), beforeDiskFull);
     assert.deepEqual(fs.readFileSync(mixedConfig), committedConfig);
     fs.renameSync = (from, to) => {
         const result = renameMixed(from, to);
@@ -598,7 +668,7 @@ try {
         assert.equal(fs.readFileSync(captured, 'utf8'), specialDir);
         assert.equal(fs.existsSync(marker), false);
     }
-    console.log('asar transaction regression: PASS (baseline trust, selective unpack, config commit/recovery, dead guard, busy 75, sidecar rescue)');
+    console.log('asar transaction regression: PASS (metadata digest, no-kill, ENOSPC, selective unpack, config/recovery, dead guard, busy 75, sidecar rescue)');
 } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
 }

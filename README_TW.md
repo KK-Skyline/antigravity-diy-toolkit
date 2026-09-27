@@ -6,7 +6,7 @@
 > **匹配版本**：Antigravity v2.12.2  
 > **核心引擎**：Node.js >=22.12.0；首次使用前執行 `npm ci --omit=dev` 安裝鎖定依賴。壁紙處理的部分功能仍需 Python。
 > **中文化範圍**：包括軟體介面、頂部系統功能表、工作列右鍵選單、載入動畫、設定面板、新手引導及登入頁。  
-> **注入原理**：修改 `app.asar` 注入 `preload.js`；安裝前保留帶 SHA-256 校驗的版本化基線備份，恢復前會驗證備份。這不能證明備份的官方來源，也不能保證斷電或宿主更新後零風險。
+> **注入原理**：修改 `app.asar` 注入 `preload.js`；安裝前保留帶 SHA-256 校驗的版本化基線備份，恢復前會驗證備份。pointer 的元資料摘要可發現元資料不一致，但不能證明官方簽章，也不能抵抗可同時改寫所有本地檔案的攻擊者或保證零風險。
 
 > [!WARNING]
 > **關於聊天歷史記錄/對話方塊內容被中文化的已知問題及匹配機制說明（開發者必讀）**：
@@ -92,7 +92,7 @@ node localization_engine.js --tw --brand-title translated
 2. 已確認的基線可在當前資料夾下執行：
    - **Windows**：雙擊執行 **`双击卸载还原官方英文.bat`**。
    - **macOS**：雙擊執行 **`双击卸载还原官方英文.command`**。
-3. 若舊版基線 pointer 缺少確認標誌，先自行核對備份來源，再執行 `node localization_engine.js --huifu --confirm-unverified-baseline`；未確認時會停止且不更動 ASAR。恢復目標是**已保存基線**，不是工具可證明的官方原版。
+3. 若舊版基線 pointer 缺少確認標誌或元資料摘要，先自行核對備份來源，再執行 `node localization_engine.js --huifu --confirm-unverified-baseline`；未確認時會停止且不更動 ASAR。恢復目標是**已保存基線**，不是工具可證明的官方原版。
 
 ---
 

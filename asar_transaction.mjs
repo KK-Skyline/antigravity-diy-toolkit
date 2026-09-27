@@ -202,13 +202,18 @@ function acquireRecoveryGuard(guard) {
 
 const BASELINE_SOURCES = new Set(['user-confirmed-unverified-live', 'user-confirmed-unverified-legacy-pair']);
 const LEGACY_SOURCES = new Set(['unlocalized-live', 'matching-legacy-pair']);
+const metadataDigest = meta => crypto.createHash('sha256').update(JSON.stringify({
+    sha256: meta.sha256, size: meta.size, source: meta.source,
+    unpackedSha256: meta.unpackedSha256, version: meta.version
+})).digest('hex');
 
 function readPointer(dir) {
     const pointer = JSON.parse(fs.readFileSync(pointerPath(dir), 'utf8'));
     const keys = pointer && typeof pointer === 'object' && !Array.isArray(pointer) ? Object.keys(pointer).sort() : [];
     if (!SHA.test(pointer?.sha256) ||
-        (keys.join(',') !== 'sha256' && keys.join(',') !== 'sha256,userConfirmedUnverified') ||
-        ('userConfirmedUnverified' in pointer && typeof pointer.userConfirmedUnverified !== 'boolean')) {
+        !['sha256', 'sha256,userConfirmedUnverified', 'metadataSha256,sha256,userConfirmedUnverified'].includes(keys.join(',')) ||
+        ('userConfirmedUnverified' in pointer && typeof pointer.userConfirmedUnverified !== 'boolean') ||
+        ('metadataSha256' in pointer && (!SHA.test(pointer.metadataSha256) || pointer.userConfirmedUnverified !== true))) {
         throw new Error('Invalid ASAR baseline pointer');
     }
     return pointer;
@@ -235,16 +240,24 @@ function verifyBaseline(dir, sha, { allowLegacySource = false } = {}) {
     return { file, info, meta, legacySource };
 }
 
-function verifiedConfirmedBaseline(dir, { sha256, userConfirmedUnverified }, confirmUnverified) {
-    const baseline = verifyBaseline(dir, sha256, { allowLegacySource: confirmUnverified });
-    if (baseline.legacySource) {
-        writeJson(`${baseline.file}.json`, { ...baseline.meta,
-            source: baseline.meta.source === 'unlocalized-live' ?
-                'user-confirmed-unverified-live' : 'user-confirmed-unverified-legacy-pair' });
+function verifiedConfirmedBaseline(dir, { sha256, metadataSha256, userConfirmedUnverified }, confirmUnverified) {
+    const baseline = verifyBaseline(dir, sha256, { allowLegacySource: confirmUnverified && !metadataSha256 });
+    if (metadataSha256 && metadataSha256 !== metadataDigest(baseline.meta)) {
+        throw new Error('ASAR baseline metadata digest mismatch');
     }
-    if (userConfirmedUnverified !== true) {
+    if (!metadataSha256 && !confirmUnverified) {
+        throw new Error('Existing ASAR baseline requires explicit confirmation of unverified provenance');
+    }
+    let meta = baseline.meta;
+    if (baseline.legacySource) {
+        meta = { ...baseline.meta,
+            source: baseline.meta.source === 'unlocalized-live' ?
+                'user-confirmed-unverified-live' : 'user-confirmed-unverified-legacy-pair' };
+        writeJson(`${baseline.file}.json`, meta);
+    }
+    if (userConfirmedUnverified !== true || !metadataSha256) {
         if (!confirmUnverified) throw new Error('Existing ASAR baseline requires explicit confirmation of unverified provenance');
-        writeJson(pointerPath(dir), { sha256, userConfirmedUnverified: true });
+        writeJson(pointerPath(dir), { sha256, userConfirmedUnverified: true, metadataSha256: metadataDigest(meta) });
     }
     return baseline;
 }
@@ -255,10 +268,14 @@ export function preflightBaselineConsent(dir, { confirmUnverified = false } = {}
         return;
     }
     const pointer = readPointer(dir);
-    if (pointer.userConfirmedUnverified !== true && !confirmUnverified) {
+    if ((pointer.userConfirmedUnverified !== true || !pointer.metadataSha256) && !confirmUnverified) {
         throw new Error('Existing ASAR baseline requires explicit confirmation of unverified provenance');
     }
-    verifyBaseline(dir, pointer.sha256, { allowLegacySource: confirmUnverified });
+    const baseline = verifyBaseline(dir, pointer.sha256,
+        { allowLegacySource: confirmUnverified && !pointer.metadataSha256 });
+    if (pointer.metadataSha256 && pointer.metadataSha256 !== metadataDigest(baseline.meta)) {
+        throw new Error('ASAR baseline metadata digest mismatch');
+    }
 }
 
 function saveBaseline(dir, source, sidecar, label) {
@@ -304,7 +321,8 @@ function saveBaseline(dir, source, sidecar, label) {
     const saved = verifyBaseline(dir, sha, { allowLegacySource: true });
     if (saved.legacySource) writeJson(`${target}.json`, { ...saved.meta, source: label });
     verifyBaseline(dir, sha);
-    writeJson(pointerPath(dir), { sha256: sha, userConfirmedUnverified: true });
+    writeJson(pointerPath(dir), { sha256: sha, userConfirmedUnverified: true,
+        metadataSha256: metadataDigest(JSON.parse(fs.readFileSync(`${target}.json`, 'utf8'))) });
     return target;
 }
 

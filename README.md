@@ -33,7 +33,7 @@
    - 具备长句与短词匹配；聊天正文与模型输出的隔离仍待完善。
 6. **🛡️ 纯净安全 & 零隐私依赖**
    - 不修改核心二进制执行文件，纯 JavaScript/CSS 动态注入；
-   - 安装前保留版本化、带 SHA-256 校验的基线备份；恢复前验证备份并保留原件。结构与哈希校验不能证明官方来源或保证零风险。
+   - 安装前保留版本化、带 SHA-256 校验的基线备份；恢复前验证备份并保留原件。pointer 中的元数据摘要可发现元数据不一致，但不能证明官方签名，也不能抵抗可同时改写所有本地文件的攻击者或保证零风险。
 
 ---
 
@@ -104,7 +104,7 @@ node localization_engine.js --brand-title english
 # 从已保存基线恢复英文状态
 node localization_engine.js --huifu
 
-# 仅在旧版基线 pointer 缺少确认标志、且已自行核对来源时，显式确认后恢复
+# 仅在旧版基线 pointer 缺少确认标志或元数据摘要、且已自行核对来源时，显式确认后恢复
 node localization_engine.js --huifu --confirm-unverified-baseline
 ```
 
