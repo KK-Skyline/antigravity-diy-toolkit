@@ -1,0 +1,4 @@
+/* Regenerate: npx --yes tailwindcss@3.4.17 -c hub-tailwind.config.cjs -i hub-tailwind.input.css -o hub.css --minify */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;

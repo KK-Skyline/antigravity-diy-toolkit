@@ -304,6 +304,7 @@ function generateJs() {
             if (fs.existsSync(cfgFile)) {
                 try { Object.assign(userCfg, JSON.parse(fs.readFileSync(cfgFile, 'utf8'))); } catch(e) {}
             }
+            if (!/^\d{1,20}$/.test(String(userCfg.workshopId))) throw new Error('Invalid workshopId');
             const weReader = require('./wallpaper_engine_reader');
             let wp = weReader.getActiveWallpaper(userCfg.monitor, userCfg.workshopId);
             // 场景 / 图片壁纸：运行 2K 60FPS 超清预设管线。
@@ -312,7 +313,7 @@ function generateJs() {
                 try {
                     const prepScript = path.join(__dirname, 'prepare_hd_wallpaper.py');
                     if (fs.existsSync(prepScript) && userCfg.workshopId) {
-                        child_process.execSync(`python "${prepScript}" ${userCfg.workshopId}`, { stdio: 'ignore', windowsHide: true });
+                        child_process.execFileSync('python', [prepScript, String(userCfg.workshopId)], { stdio: 'ignore', windowsHide: true, shell: false });
                         wp = weReader.getActiveWallpaper(userCfg.monitor, userCfg.workshopId);
                     }
                 } catch (e) {}

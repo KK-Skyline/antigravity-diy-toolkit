@@ -1,13 +1,58 @@
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
-const url = require('url');
 const child_process = require('child_process');
 
 const weReader = require('./wallpaper_engine_reader');
 
 const PORT = 3210;
+const HOST = '127.0.0.1';
+const MAX_BODY_BYTES = 64 * 1024;
 const CFG_FILE = path.join(__dirname, 'wallpaper_config.json');
+
+function sendJson(res, status, value) {
+    res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' });
+    res.end(JSON.stringify(value));
+}
+
+function readJsonBody(req) {
+    return new Promise((resolve, reject) => {
+        if (!/^application\/json(?:\s*;|\s*$)/i.test(req.headers['content-type'] || '')) {
+            req.resume();
+            reject({ status: 415, message: 'Content-Type must be application/json' });
+            return;
+        }
+        let body = '';
+        let size = 0;
+        let done = false;
+        req.on('data', chunk => {
+            if (done) return;
+            size += chunk.length;
+            if (size > MAX_BODY_BYTES) {
+                done = true;
+                reject({ status: 413, message: 'Request body too large' });
+                return;
+            }
+            body += chunk;
+        });
+        req.on('end', () => {
+            if (done) return;
+            try {
+                const data = JSON.parse(body);
+                if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid JSON object');
+                resolve(data);
+            } catch (error) {
+                reject({ status: 400, message: 'Invalid JSON object' });
+            }
+        });
+        req.on('error', reject);
+    });
+}
+
+const NUMBER_RANGES = {
+    opacity: [0.15, 1], blur: [0, 25], brightness: [50, 150],
+    contrast: [50, 160], saturate: [30, 180], darken: [0, 50]
+};
 
 // 读取当前配置
 function readConfig() {
@@ -40,7 +85,6 @@ function scanWallpapers(force = false) {
         return cachedWallpapers;
     }
 
-    const roots = weReader.findWallpaperEngineConfig ? [path.dirname(path.dirname(path.dirname(weReader.findWallpaperEngineConfig())))] : [];
     // 聚合所有可能的 Steam 库
     const candidateDirs = [
         'E:/SteamLibrary/steamapps/workshop/content/431960',
@@ -58,10 +102,11 @@ function scanWallpapers(force = false) {
         try {
             const items = fs.readdirSync(baseDir);
             for (const id of items) {
+                if (!/^\d{1,20}$/.test(id)) continue;
                 if (map.has(id)) continue;
                 const itemDir = path.join(baseDir, id);
                 try {
-                    const stat = fs.statSync(itemDir);
+                    const stat = fs.lstatSync(itemDir);
                     if (!stat.isDirectory()) continue;
                     
                     const projectPath = path.join(itemDir, 'project.json');
@@ -101,6 +146,7 @@ function scanWallpapers(force = false) {
                         tags,
                         desc: desc.substring(0, 300),
                         dir: itemDir.replace(/\\/g, '/'),
+                        baseDir,
                         mtime: stat.mtimeMs,
                         isActive: String(id) === String(currentCfg.workshopId)
                     });
@@ -154,28 +200,27 @@ function restartAntigravityClient() {
 
 // HTTP 服务器
 const server = http.createServer((req, res) => {
-    const parsedUrl = url.parse(req.url, true);
-    const pathname = parsedUrl.pathname;
-
-    // CORS
-    res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
-    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
-
-    if (req.method === 'OPTIONS') {
-        res.writeHead(200);
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
+    res.setHeader('X-Frame-Options', 'DENY');
+    const allowedHosts = new Set([`${HOST}:${PORT}`, `localhost:${PORT}`]);
+    const allowedOrigins = new Set([`http://${HOST}:${PORT}`, `http://localhost:${PORT}`]);
+    if (!allowedHosts.has(req.headers.host) ||
+        (req.headers.origin && !allowedOrigins.has(req.headers.origin))) {
+        res.writeHead(403);
         res.end();
         return;
     }
+    let requestUrl;
+    try { requestUrl = new URL(req.url, `http://${req.headers.host}`); }
+    catch (error) { res.writeHead(400); res.end(); return; }
+    if (!allowedOrigins.has(requestUrl.origin)) { res.writeHead(403); res.end(); return; }
+    const pathname = requestUrl.pathname;
 
     // 1. 获取壁纸列表 API
     if (pathname === '/api/wallpapers') {
-        const list = scanWallpapers(parsedUrl.query.refresh === '1');
+        const list = scanWallpapers(requestUrl.searchParams.get('refresh') === '1');
         const cfg = readConfig();
-        const result = list.map(item => ({
-            ...item,
-            isActive: String(item.id) === String(cfg.workshopId)
-        }));
+        const result = list.map(({ dir, baseDir, ...item }) => ({ ...item, isActive: item.id === String(cfg.workshopId) }));
         res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
         res.end(JSON.stringify({
             count: result.length,
@@ -226,14 +271,27 @@ const server = http.createServer((req, res) => {
 
     // 4. 一键应用壁纸 API
     if (pathname === '/api/apply' && req.method === 'POST') {
-        let body = '';
-        req.on('data', chunk => body += chunk);
-        req.on('end', () => {
+        readJsonBody(req).then(data => {
+            let validated = false;
             try {
-                const data = JSON.parse(body);
+                for (const [key, [min, max]] of Object.entries(NUMBER_RANGES)) {
+                    if (data[key] !== undefined &&
+                        (typeof data[key] !== 'number' || !Number.isFinite(data[key]) || data[key] < min || data[key] > max)) {
+                        throw new Error(`Invalid ${key}`);
+                    }
+                }
+                for (const key of ['flipHorizontal', 'autoRestart']) {
+                    if (data[key] !== undefined && typeof data[key] !== 'boolean') throw new Error(`Invalid ${key}`);
+                }
+                const id = data.workshopId;
+                if (typeof id !== 'string' || !/^\d{1,20}$/.test(id) ||
+                    !scanWallpapers().some(item => item.id === id)) {
+                    throw new Error('Invalid workshopId');
+                }
+                validated = true;
                 const current = readConfig();
                 
-                if (data.workshopId) current.workshopId = String(data.workshopId);
+                current.workshopId = id;
                 if (typeof data.opacity === 'number') current.opacity = data.opacity;
                 if (typeof data.blur === 'number') current.blur = data.blur;
                 if (typeof data.brightness === 'number') current.brightness = data.brightness;
@@ -247,15 +305,14 @@ const server = http.createServer((req, res) => {
 
                 // 执行注入打包引擎
                 const scriptPath = path.join(__dirname, 'localization_engine.js');
-                const killArg = data.autoRestart ? '' : '--no-kill';
-                const cmd = `node "${scriptPath}" --wallpaper ${killArg}`;
-                console.log('[Hub] 正在执行应用指令:', cmd);
+                const args = [scriptPath, '--wallpaper'];
+                if (!data.autoRestart) args.push('--no-kill');
+                console.log('[Hub] 正在执行应用指令:', process.execPath, args);
                 
-                child_process.exec(cmd, { cwd: __dirname }, (err, stdout, stderr) => {
+                child_process.execFile(process.execPath, args, { cwd: __dirname, windowsHide: true, shell: false }, (err, stdout, stderr) => {
                     if (err) {
                         console.error('[Hub] 应用壁纸失败:', stderr || err.message);
-                        res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8' });
-                        res.end(JSON.stringify({ success: false, error: err.message, details: stderr }));
+                        sendJson(res, 500, { success: false, code: 'APPLY_FAILED', error: '应用失败，请查看服务端日志。' });
                         return;
                     }
                     console.log('[Hub] 壁纸应用成功，输出:\n', stdout);
@@ -272,30 +329,60 @@ const server = http.createServer((req, res) => {
                     }));
                 });
             } catch(e) {
-                res.writeHead(400, { 'Content-Type': 'application/json; charset=utf-8' });
-                res.end(JSON.stringify({ success: false, error: e.message }));
+                console.error('[Hub] 应用请求失败:', e);
+                sendJson(res, validated ? 500 : 400, validated
+                    ? { success: false, code: 'APPLY_FAILED', error: '应用失败，请查看服务端日志。' }
+                    : { success: false, code: 'INVALID_REQUEST', error: '请求参数无效。' });
             }
+        }).catch(e => {
+            const status = [400, 413, 415].includes(e.status) ? e.status : 400;
+            sendJson(res, status, { success: false, code: 'INVALID_REQUEST', error: '请求格式无效。' });
         });
         return;
     }
 
     // 5. 打开本地文件夹 API
     if (pathname === '/api/open-folder' && req.method === 'POST') {
-        let body = '';
-        req.on('data', chunk => body += chunk);
-        req.on('end', () => {
+        readJsonBody(req).then(data => {
+            if (typeof data.id !== 'string' || !/^\d{1,20}$/.test(data.id)) {
+                sendJson(res, 400, { success: false, code: 'INVALID_REQUEST', error: '壁纸 ID 无效。' });
+                return;
+            }
             try {
-                const data = JSON.parse(body);
-                if (data.dir && fs.existsSync(data.dir)) {
-                    child_process.exec(`explorer.exe "${data.dir.replace(/\//g, '\\')}"`);
-                    res.writeHead(200, { 'Content-Type': 'application/json' });
-                    res.end(JSON.stringify({ success: true }));
+                const wp = scanWallpapers().find(item => item.id === data.id);
+                if (!wp) {
+                    sendJson(res, 400, { success: false, code: 'INVALID_REQUEST', error: '未找到壁纸。' });
                     return;
                 }
-            } catch(e) {}
-            res.writeHead(400);
-            res.end();
+                const base = fs.realpathSync(wp.baseDir);
+                const dir = fs.realpathSync(wp.dir);
+                if (path.dirname(dir) !== base || !fs.statSync(dir).isDirectory()) throw new Error('Invalid wallpaper directory');
+                const child = child_process.spawn('explorer.exe', [dir], { shell: false, detached: true, stdio: 'ignore' });
+                child.once('spawn', () => { child.unref(); sendJson(res, 200, { success: true }); });
+                child.once('error', e => {
+                    console.error('[Hub] 打开壁纸目录失败:', e);
+                    sendJson(res, 500, { success: false, code: 'OPEN_FOLDER_FAILED', error: '无法打开壁纸目录。' });
+                });
+            } catch(e) {
+                console.error('[Hub] 打开壁纸目录失败:', e);
+                sendJson(res, 500, { success: false, code: 'OPEN_FOLDER_FAILED', error: '无法打开壁纸目录。' });
+            }
+        }).catch(e => {
+            const status = [400, 413, 415].includes(e.status) ? e.status : 400;
+            sendJson(res, status, { success: false, code: 'INVALID_REQUEST', error: '请求格式无效。' });
         });
+        return;
+    }
+
+    if (pathname === '/hub.css' || pathname === '/hub.js') {
+        try {
+            const content = fs.readFileSync(path.join(__dirname, pathname.slice(1)));
+            res.writeHead(200, { 'Content-Type': pathname.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8' });
+            res.end(content);
+        } catch (error) {
+            res.writeHead(404);
+            res.end();
+        }
         return;
     }
 
@@ -318,23 +405,7 @@ function renderDashboardHtml() {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Antigravity 壁纸控制中心 · Wallpaper Hub</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script>
-    tailwind.config = {
-      darkMode: 'class',
-      theme: {
-        extend: {
-          colors: {
-            background: '#0a0d14',
-            card: '#121722',
-            cardBorder: '#1e2638',
-            primary: '#3b82f6',
-            primaryHover: '#2563eb'
-          }
-        }
-      }
-    }
-  </script>
+  <link rel="stylesheet" href="/hub.css">
   <style>
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: #0a0d14; }
@@ -436,7 +507,7 @@ function renderDashboardHtml() {
     <!-- 状态指示 -->
     <div class="flex items-center gap-3">
       <span id="statBadge" class="text-xs px-3 py-1.5 rounded-lg bg-[#161c2a] border border-cardBorder text-slate-300 font-medium">正在读取壁纸库...</span>
-      <button onclick="fetchWallpapers(true)" class="p-2 rounded-xl bg-[#161c2a] hover:bg-[#1f273a] border border-cardBorder text-slate-300 hover:text-white transition" title="刷新壁纸库">
+      <button data-action="refresh" class="p-2 rounded-xl bg-[#161c2a] hover:bg-[#1f273a] border border-cardBorder text-slate-300 hover:text-white transition" title="刷新壁纸库">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path></svg>
       </button>
     </div>
@@ -445,11 +516,11 @@ function renderDashboardHtml() {
   <!-- 二级过滤标签 -->
   <div class="px-6 py-3 border-b border-cardBorder/60 bg-[#0d111a] flex items-center justify-between gap-4 text-xs">
     <div class="flex items-center gap-2 overflow-x-auto py-1">
-      <button onclick="setFilter('all')" class="tab-btn active px-3 py-1 rounded-lg bg-blue-600 text-white font-medium transition" data-type="all">全部 (<span id="countAll">0</span>)</button>
-      <button onclick="setFilter('scene')" class="tab-btn px-3 py-1 rounded-lg bg-[#161c2a] hover:bg-[#1f273a] text-slate-300 font-medium transition" data-type="scene">场景动画 (<span id="countScene">0</span>)</button>
-      <button onclick="setFilter('video')" class="tab-btn px-3 py-1 rounded-lg bg-[#161c2a] hover:bg-[#1f273a] text-slate-300 font-medium transition" data-type="video">视频壁纸 (<span id="countVideo">0</span>)</button>
-      <button onclick="setFilter('web')" class="tab-btn px-3 py-1 rounded-lg bg-[#161c2a] hover:bg-[#1f273a] text-slate-300 font-medium transition" data-type="web">网页/交互 (<span id="countWeb">0</span>)</button>
-      <button onclick="setFilter('active')" class="tab-btn px-3 py-1 rounded-lg bg-[#161c2a] hover:bg-[#1f273a] text-emerald-400 font-medium transition" data-type="active">当前生效</button>
+      <button class="tab-btn active px-3 py-1 rounded-lg bg-blue-600 text-white font-medium transition" data-type="all">全部 (<span id="countAll">0</span>)</button>
+      <button class="tab-btn px-3 py-1 rounded-lg bg-[#161c2a] hover:bg-[#1f273a] text-slate-300 font-medium transition" data-type="scene">场景动画 (<span id="countScene">0</span>)</button>
+      <button class="tab-btn px-3 py-1 rounded-lg bg-[#161c2a] hover:bg-[#1f273a] text-slate-300 font-medium transition" data-type="video">视频壁纸 (<span id="countVideo">0</span>)</button>
+      <button class="tab-btn px-3 py-1 rounded-lg bg-[#161c2a] hover:bg-[#1f273a] text-slate-300 font-medium transition" data-type="web">网页/交互 (<span id="countWeb">0</span>)</button>
+      <button class="tab-btn px-3 py-1 rounded-lg bg-[#161c2a] hover:bg-[#1f273a] text-emerald-400 font-medium transition" data-type="active">当前生效</button>
     </div>
     <div class="text-slate-400 text-xs hidden sm:block">
       点击任意卡片展开视觉调参面板
@@ -473,7 +544,7 @@ function renderDashboardHtml() {
       <div class="flex items-center gap-2">
         <h2 class="text-base font-bold text-white">壁纸参数微调与应用</h2>
       </div>
-      <button onclick="closeDrawer()" class="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition">
+      <button data-action="close" class="p-1.5 rounded-lg hover:bg-slate-800 text-slate-400 hover:text-white transition">
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path></svg>
       </button>
     </div>
@@ -500,7 +571,7 @@ function renderDashboardHtml() {
             <span class="text-slate-300">壁纸透明度 (Opacity)</span>
             <span id="valOpacity" class="font-mono text-blue-400 font-bold">68%</span>
           </div>
-          <input id="sliderOpacity" type="range" min="15" max="100" value="68" class="hub-slider w-full cursor-pointer" oninput="updatePreview()" />
+          <input id="sliderOpacity" type="range" min="15" max="100" value="68" class="hub-slider w-full cursor-pointer" />
         </div>
 
         <!-- 磨砂模糊 -->
@@ -509,7 +580,7 @@ function renderDashboardHtml() {
             <span class="text-slate-300">毛玻璃模糊 (Blur)</span>
             <span id="valBlur" class="font-mono text-blue-400 font-bold">0 px</span>
           </div>
-          <input id="sliderBlur" type="range" min="0" max="25" value="0" class="hub-slider w-full cursor-pointer" oninput="updatePreview()" />
+          <input id="sliderBlur" type="range" min="0" max="25" value="0" class="hub-slider w-full cursor-pointer" />
         </div>
 
         <!-- 亮度 -->
@@ -518,7 +589,7 @@ function renderDashboardHtml() {
             <span class="text-slate-300">画面亮度 (Brightness)</span>
             <span id="valBrightness" class="font-mono text-blue-400 font-bold">105%</span>
           </div>
-          <input id="sliderBrightness" type="range" min="50" max="150" value="105" class="hub-slider w-full cursor-pointer" oninput="updatePreview()" />
+          <input id="sliderBrightness" type="range" min="50" max="150" value="105" class="hub-slider w-full cursor-pointer" />
         </div>
 
         <!-- 对比度 -->
@@ -527,7 +598,7 @@ function renderDashboardHtml() {
             <span class="text-slate-300">对比度 (Contrast)</span>
             <span id="valContrast" class="font-mono text-blue-400 font-bold">110%</span>
           </div>
-          <input id="sliderContrast" type="range" min="50" max="160" value="110" class="hub-slider w-full cursor-pointer" oninput="updatePreview()" />
+          <input id="sliderContrast" type="range" min="50" max="160" value="110" class="hub-slider w-full cursor-pointer" />
         </div>
 
         <!-- 饱和度 -->
@@ -536,7 +607,7 @@ function renderDashboardHtml() {
             <span class="text-slate-300">色彩饱和度 (Saturate)</span>
             <span id="valSaturate" class="font-mono text-blue-400 font-bold">110%</span>
           </div>
-          <input id="sliderSaturate" type="range" min="30" max="180" value="110" class="hub-slider w-full cursor-pointer" oninput="updatePreview()" />
+          <input id="sliderSaturate" type="range" min="30" max="180" value="110" class="hub-slider w-full cursor-pointer" />
         </div>
 
         <!-- 暗化遮罩 -->
@@ -545,12 +616,12 @@ function renderDashboardHtml() {
             <span class="text-slate-300">边缘暗角遮罩 (Darken Mask)</span>
             <span id="valDarken" class="font-mono text-blue-400 font-bold">18%</span>
           </div>
-          <input id="sliderDarken" type="range" min="0" max="50" value="18" class="hub-slider w-full cursor-pointer" oninput="updatePreview()" />
+          <input id="sliderDarken" type="range" min="0" max="50" value="18" class="hub-slider w-full cursor-pointer" />
         </div>
 
         <!-- 重置参数 -->
         <div class="pt-1 flex justify-end">
-          <button onclick="resetSliders()" class="text-[11px] text-slate-400 hover:text-blue-400 transition">恢复默认参数</button>
+          <button data-action="reset" class="text-[11px] text-slate-400 hover:text-blue-400 transition">恢复默认参数</button>
         </div>
       </div>
 
@@ -561,13 +632,13 @@ function renderDashboardHtml() {
           <span>应用后自动重启 Antigravity 客户端（立即生效）</span>
         </label>
 
-        <button id="btnApply" onclick="applyWallpaper()" class="w-full py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-sm shadow-lg shadow-blue-500/25 transition-all flex items-center justify-center gap-2">
+        <button id="btnApply" data-action="apply" class="w-full py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-sm shadow-lg shadow-blue-500/25 transition-all flex items-center justify-center gap-2">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
           <span>一键应用换肤到零重力</span>
         </button>
 
         <div class="flex items-center justify-between text-xs text-slate-400 px-1 pt-1">
-          <button onclick="openCurrentDir()" class="hover:text-slate-200 transition underline">打开壁纸本地目录</button>
+          <button data-action="open-folder" class="hover:text-slate-200 transition underline">打开壁纸本地目录</button>
           <a id="steamLink" href="#" target="_blank" class="hover:text-blue-400 transition flex items-center gap-1">
             <span>在 Steam 工坊中查看</span>
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"></path></svg>
@@ -580,332 +651,23 @@ function renderDashboardHtml() {
   <!-- 全局 Toast 提示 -->
   <div id="toast" class="fixed bottom-6 right-6 z-50 transform translate-y-20 opacity-0 transition-all duration-300 pointer-events-none px-4 py-3 rounded-xl text-sm font-medium shadow-2xl flex items-center gap-2"></div>
 
-  <script>
-    let allWallpapers = [];
-    let currentFilter = 'all';
-    let selectedWp = null;
-    let activeWorkshopId = '';
-
-    // 初始化加载
-    window.addEventListener('DOMContentLoaded', () => {
-      fetchWallpapers();
-      initSearch();
-      initSliders();
-    });
-
-    async function fetchWallpapers(force = false) {
-      document.getElementById('statBadge').textContent = '正在极速扫描壁纸库...';
-      try {
-        const res = await fetch('/api/wallpapers' + (force ? '?refresh=1' : ''));
-        const data = await res.json();
-        allWallpapers = data.wallpapers || [];
-        activeWorkshopId = data.activeId || '';
-
-        // 更新统计计数
-        document.getElementById('countAll').textContent = allWallpapers.length;
-        document.getElementById('countScene').textContent = allWallpapers.filter(w => w.type === 'scene').length;
-        document.getElementById('countVideo').textContent = allWallpapers.filter(w => w.type === 'video').length;
-        document.getElementById('countWeb').textContent = allWallpapers.filter(w => w.type === 'web').length;
-        document.getElementById('statBadge').textContent = allWallpapers.length + ' 款已订阅壁纸已就绪';
-
-        renderGrid();
-      } catch(e) {
-        document.getElementById('statBadge').textContent = '扫描失败: ' + e.message;
-      }
-    }
-
-    function initSearch() {
-      const input = document.getElementById('searchInput');
-      input.addEventListener('input', () => {
-        renderGrid();
-      });
-    }
-
-    function setFilter(type) {
-      currentFilter = type;
-      document.querySelectorAll('.tab-btn').forEach(btn => {
-        if (btn.dataset.type === type) {
-          btn.classList.add('bg-blue-600', 'text-white');
-          btn.classList.remove('bg-[#161c2a]', 'text-slate-300');
-        } else {
-          btn.classList.remove('bg-blue-600', 'text-white');
-          btn.classList.add('bg-[#161c2a]', 'text-slate-300');
-        }
-      });
-      renderGrid();
-    }
-
-    function renderGrid() {
-      const query = document.getElementById('searchInput').value.trim().toLowerCase();
-      const grid = document.getElementById('grid');
-      const emptyTip = document.getElementById('emptyTip');
-
-      let list = allWallpapers.filter(item => {
-        // 类型过滤
-        if (currentFilter === 'scene' && item.type !== 'scene') return false;
-        if (currentFilter === 'video' && item.type !== 'video') return false;
-        if (currentFilter === 'web' && item.type !== 'web') return false;
-        if (currentFilter === 'active' && item.id !== activeWorkshopId) return false;
-
-        // 搜索关键词
-        if (query) {
-          return item.title.toLowerCase().includes(query) || item.id.includes(query);
-        }
-        return true;
-      });
-
-      if (list.length === 0) {
-        grid.innerHTML = '';
-        emptyTip.classList.remove('hidden');
-        return;
-      }
-
-      emptyTip.classList.add('hidden');
-      grid.innerHTML = list.map(item => {
-        const isActive = item.id === activeWorkshopId;
-        const typeColor = item.type === 'video' ? 'bg-purple-500/20 text-purple-300 border-purple-500/30' : 
-                         item.type === 'web' ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30' :
-                         'bg-blue-500/20 text-blue-300 border-blue-500/30';
-        const typeLabel = item.type === 'video' ? '视频' : item.type === 'web' ? '网页' : '场景';
-
-        return \`
-          <div onclick="openInspector('\${item.id}')" class="group relative rounded-2xl bg-card border \${isActive ? 'border-emerald-500 ring-2 ring-emerald-500/30' : 'border-cardBorder hover:border-blue-500/60'} overflow-hidden cursor-pointer transition-all duration-200 hover:-translate-y-1 hover:shadow-xl hover:shadow-black/50 flex flex-col">
-            <!-- 缩略图容器 -->
-            <div class="relative aspect-video w-full overflow-hidden bg-black/30 card-zoom">
-              <img src="/api/preview/\${item.id}" loading="lazy" class="w-full h-full object-cover transition-transform duration-300" onerror="this.src='data:image/svg+xml,<svg xmlns=\\'http://www.w3.org/2000/svg\\' viewBox=\\'0 0 100 60\\'><rect width=\\'100\\' height=\\'60\\' fill=\\'%23121722\\'/><text x=\\'50\\' y=\\'32\\' fill=\\'%23666\\' font-size=\\'8\\' text-anchor=\\'middle\\'>无封面</text></svg>'" />
-              
-              <!-- 标签徽章 -->
-              <div class="absolute top-2 right-2 flex items-center gap-1">
-                \${item.hasAnimated ? '<span class="px-1.5 py-0.5 rounded-md bg-cyan-500/80 text-white font-mono text-[9px] shadow-sm font-bold">60帧超清</span>' : ''}
-                <span class="px-1.5 py-0.5 rounded-md text-[10px] font-medium border backdrop-blur-md \${typeColor}">\${typeLabel}</span>
-              </div>
-
-              \${isActive ? '<div class="absolute top-2 left-2 px-2 py-0.5 rounded-md bg-emerald-500 text-black font-bold text-[10px] shadow-lg flex items-center gap-1"><span class="w-1.5 h-1.5 rounded-full bg-black animate-pulse"></span>已生效</div>' : ''}
-            </div>
-
-            <!-- 卡片文本 -->
-            <div class="p-3 flex-1 flex flex-col justify-between">
-              <h3 class="text-xs font-semibold text-slate-200 line-clamp-1 group-hover:text-blue-400 transition" title="\${escapeHtml(item.title)}">\${escapeHtml(item.title)}</h3>
-              <div class="mt-2 flex items-center justify-between text-[10px] text-slate-500 font-mono">
-                <span>ID: \${item.id}</span>
-                <span class="text-blue-400/80 opacity-0 group-hover:opacity-100 transition">配置 →</span>
-              </div>
-            </div>
-          </div>
-        \`;
-      }).join('');
-    }
-
-    function escapeHtml(str) {
-      if (!str) return '';
-      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    }
-
-    // 打开参数调参抽屉
-    async function openInspector(id) {
-      selectedWp = allWallpapers.find(w => w.id === id);
-      if (!selectedWp) return;
-
-      document.getElementById('drawerTitle').textContent = selectedWp.title;
-      document.getElementById('drawerTypeBadge').textContent = selectedWp.type.toUpperCase();
-      document.getElementById('drawerPreviewImg').src = '/api/preview/' + selectedWp.id;
-      document.getElementById('steamLink').href = 'https://steamcommunity.com/sharedfiles/filedetails/?id=' + selectedWp.id;
-
-      // 读取并还原当前配置
-      try {
-        const res = await fetch('/api/config');
-        const cfg = await res.json();
-        if (selectedWp.id === cfg.workshopId) {
-          document.getElementById('sliderOpacity').value = Math.round((cfg.opacity ?? 0.68) * 100);
-          document.getElementById('sliderBlur').value = cfg.blur ?? 0;
-          document.getElementById('sliderBrightness').value = cfg.brightness ?? 105;
-          document.getElementById('sliderContrast').value = cfg.contrast ?? 110;
-          document.getElementById('sliderSaturate').value = cfg.saturate ?? 110;
-          document.getElementById('sliderDarken').value = cfg.darken ?? 18;
-        } else {
-          resetSliders();
-        }
-      } catch(e) {
-        resetSliders();
-      }
-
-      updatePreview();
-      document.getElementById('drawer').classList.remove('translate-x-full');
-    }
-
-    function closeDrawer() {
-      document.getElementById('drawer').classList.add('translate-x-full');
-    }
-
-    function resetSliders() {
-      document.getElementById('sliderOpacity').value = 68;
-      document.getElementById('sliderBlur').value = 0;
-      document.getElementById('sliderBrightness').value = 105;
-      document.getElementById('sliderContrast').value = 110;
-      document.getElementById('sliderSaturate').value = 110;
-      document.getElementById('sliderDarken').value = 18;
-      updatePreview();
-    }
-
-    function updatePreview() {
-      const op = document.getElementById('sliderOpacity').value;
-      const blur = document.getElementById('sliderBlur').value;
-      const br = document.getElementById('sliderBrightness').value;
-      const ct = document.getElementById('sliderContrast').value;
-      const sat = document.getElementById('sliderSaturate').value;
-      const dark = document.getElementById('sliderDarken').value;
-
-      document.getElementById('valOpacity').textContent = op + '%';
-      document.getElementById('valBlur').textContent = blur + ' px';
-      document.getElementById('valBrightness').textContent = br + '%';
-      document.getElementById('valContrast').textContent = ct + '%';
-      document.getElementById('valSaturate').textContent = sat + '%';
-      document.getElementById('valDarken').textContent = dark + '%';
-
-      // 实时更新每一个滑块的轨道着色进度百分比
-      [document.getElementById('sliderOpacity'),
-       document.getElementById('sliderBlur'),
-       document.getElementById('sliderBrightness'),
-       document.getElementById('sliderContrast'),
-       document.getElementById('sliderSaturate'),
-       document.getElementById('sliderDarken')].forEach(s => {
-         if (!s) return;
-         const min = parseFloat(s.min) || 0;
-         const max = parseFloat(s.max) || 100;
-         const pct = ((s.value - min) / (max - min)) * 100;
-         s.style.setProperty('--progress', pct + '%');
-       });
-
-      const img = document.getElementById('drawerPreviewImg');
-      const mask = document.getElementById('drawerMask');
-
-      img.style.opacity = op / 100;
-      img.style.filter = \`blur(\${blur}px) brightness(\${br}%) contrast(\${ct}%) saturate(\${sat}%)\`;
-      mask.style.background = \`radial-gradient(circle at center, rgba(10,13,20,\${(dark/100)*0.4}) 0%, rgba(10,13,20,\${Math.min(1, (dark/100)+0.35)}) 100%)\`;
-    }
-
-    // 初始化滑块拖拽捕获与流畅度增强
-    function initSliders() {
-      const sliders = document.querySelectorAll('input[type="range"].hub-slider');
-      sliders.forEach(slider => {
-        slider.draggable = false;
-        slider.addEventListener('dragstart', (e) => {
-          e.preventDefault();
-          e.stopImmediatePropagation();
-        });
-
-        // 增强指针拖拽支持：利用 PointerCapture 确保无论鼠标移得多快或移出元素，都能 100% 丝滑连续捕获拖拽
-        const updateFromPointer = (e) => {
-          const rect = slider.getBoundingClientRect();
-          if (rect.width <= 0) return;
-          const min = parseFloat(slider.min) || 0;
-          const max = parseFloat(slider.max) || 100;
-          const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
-          const step = parseFloat(slider.step) || 1;
-          const rawVal = min + ratio * (max - min);
-          const steppedVal = Math.round(rawVal / step) * step;
-          if (String(slider.value) !== String(steppedVal)) {
-            slider.value = steppedVal;
-            slider.dispatchEvent(new Event('input', { bubbles: true }));
-          }
-        };
-
-        slider.addEventListener('pointerdown', (e) => {
-          if (e.button !== 0) return; // 仅左键响应
-          try { slider.setPointerCapture(e.pointerId); } catch(_) {}
-          updateFromPointer(e);
-
-          const onPointerMove = (ev) => {
-            if (ev.buttons === 1) {
-              updateFromPointer(ev);
-            }
-          };
-
-          const onPointerUp = (ev) => {
-            try { slider.releasePointerCapture(ev.pointerId); } catch(_) {}
-            window.removeEventListener('pointermove', onPointerMove);
-            window.removeEventListener('pointerup', onPointerUp);
-            window.removeEventListener('pointercancel', onPointerUp);
-          };
-
-          window.addEventListener('pointermove', onPointerMove);
-          window.addEventListener('pointerup', onPointerUp);
-          window.addEventListener('pointercancel', onPointerUp);
-        });
-      });
-
-      updatePreview();
-    }
-
-    // 一键应用壁纸
-    async function applyWallpaper() {
-      if (!selectedWp) return;
-      const btn = document.getElementById('btnApply');
-      const oldHtml = btn.innerHTML;
-      btn.disabled = true;
-      btn.innerHTML = '<span class="w-4 h-4 border-2 border-white/20 border-t-white rounded-full animate-spin"></span> 正在打包注入 app.asar...';
-
-      const payload = {
-        workshopId: selectedWp.id,
-        opacity: parseInt(document.getElementById('sliderOpacity').value) / 100,
-        blur: parseInt(document.getElementById('sliderBlur').value),
-        brightness: parseInt(document.getElementById('sliderBrightness').value),
-        contrast: parseInt(document.getElementById('sliderContrast').value),
-        saturate: parseInt(document.getElementById('sliderSaturate').value),
-        darken: parseInt(document.getElementById('sliderDarken').value),
-        autoRestart: document.getElementById('chkAutoRestart').checked
-      };
-
-      try {
-        const res = await fetch('/api/apply', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-        const data = await res.json();
-        if (data.success) {
-          activeWorkshopId = selectedWp.id;
-          renderGrid();
-          showToast(data.message, 'success');
-        } else {
-          showToast('应用失败: ' + (data.error || '未知错误'), 'error');
-        }
-      } catch(e) {
-        showToast('请求异常: ' + e.message, 'error');
-      } finally {
-        btn.disabled = false;
-        btn.innerHTML = oldHtml;
-      }
-    }
-
-    function openCurrentDir() {
-      if (selectedWp && selectedWp.dir) {
-        fetch('/api/open-folder', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ dir: selectedWp.dir })
-        });
-      }
-    }
-
-    function showToast(text, type = 'success') {
-      const toast = document.getElementById('toast');
-      toast.textContent = text;
-      toast.className = 'fixed bottom-6 right-6 z-50 transition-all duration-300 px-4 py-3 rounded-xl text-sm font-semibold shadow-2xl flex items-center gap-2 ' +
-        (type === 'success' ? 'bg-emerald-600 text-white shadow-emerald-500/20' : 'bg-red-600 text-white shadow-red-500/20');
-      toast.classList.remove('translate-y-20', 'opacity-0');
-      setTimeout(() => {
-        toast.classList.add('translate-y-20', 'opacity-0');
-      }, 4000);
-    }
-  </script>
+  <script src="/hub.js" defer></script>
 </body>
 </html>`;
 }
 
-server.listen(PORT, () => {
+server.on('error', error => {
+    if (error.code === 'EADDRINUSE') {
+        console.error(`[错误] 端口 ${HOST}:${PORT} 已被占用，请关闭已有 Hub 实例。`);
+    } else {
+        console.error('[错误] Hub 启动失败:', error);
+    }
+    process.exitCode = 1;
+});
+
+server.listen(PORT, HOST, () => {
     console.log(`====================================================`);
     console.log(`  Antigravity 壁纸控制中心已启动！`);
-    console.log(`  访问地址: http://localhost:${PORT}`);
+    console.log(`  访问地址: http://${HOST}:${PORT}`);
     console.log(`====================================================`);
 });
