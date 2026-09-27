@@ -301,7 +301,10 @@ const server = http.createServer((req, res) => {
                     applyInFlight = false;
                     if (err) {
                         console.error('[Hub] 应用壁纸失败:', stderr || err.message);
-                        sendJson(res, 500, { success: false, code: 'APPLY_FAILED', error: '应用失败，请查看服务端日志。' });
+                        const busy = err.code === 75 && /(?:^|\n)(?:\[错误\] )?ASAR_BUSY:?(?:\s|$)/.test(stderr || '');
+                        sendJson(res, busy ? 409 : 500, busy
+                            ? { success: false, code: 'APPLY_BUSY', error: '已有应用任务正在执行。' }
+                            : { success: false, code: 'APPLY_FAILED', error: '应用失败，请查看服务端日志。' });
                         return;
                     }
                     console.log('[Hub] 壁纸应用成功，输出:\n', stdout);

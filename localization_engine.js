@@ -1901,7 +1901,7 @@ async function main() {
     try {
     if (isV2) {
         if (checkIfAppIsRunning()) throw new Error('Antigravity 在锁定后重新启动，已停止写入。');
-        transaction.recover(resourcesDir);
+        transaction.recover(resourcesDir, { rescueSidecar: huifu });
     }
     if (huifu) {
         console.log("====== 正在卸载中文汉化，恢复官方原版 ======");
@@ -1950,4 +1950,7 @@ async function main() {
     if (!success) process.exitCode = 1;
 }
 
-main().catch(error => { console.error(`[错误] ${error.message}`); process.exitCode = 1; });
+main().catch(error => {
+    console.error(`[错误] ${error.code === 'ASAR_BUSY' ? 'ASAR_BUSY: ' : ''}${error.message}`);
+    process.exitCode = error.code === 'ASAR_BUSY' ? 75 : 1;
+});

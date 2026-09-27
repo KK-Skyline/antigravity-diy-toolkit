@@ -7,12 +7,23 @@ const SIGNATURE = '/* --- ANTIGRAVITY CHINESE LOCALIZATION START --- */';
 const SHA = /^[a-f0-9]{64}$/;
 const livePath = dir => path.join(dir, 'app.asar');
 const pointerPath = dir => path.join(dir, 'app.asar.baseline.json');
+const restoreMarkerPath = dir => path.join(dir, 'app.asar.restore.pending');
 const backupPath = (dir, sha) => path.join(dir, `app.asar.baseline-${sha}.bak`);
 const hashFile = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const unique = () => `${process.pid}-${crypto.randomUUID()}`;
+const busyError = message => Object.assign(new Error(message), { code: 'ASAR_BUSY' });
+
+function processAlive(pid) {
+    try { process.kill(pid, 0); return true; }
+    catch (error) {
+        if (error.code === 'ESRCH') return false;
+        if (error.code === 'EPERM') return true;
+        throw error;
+    }
+}
 
 function syncFile(file) {
-    const fd = fs.openSync(file, 'r');
+    const fd = fs.openSync(file, 'r+');
     try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
 }
 
@@ -20,6 +31,14 @@ function syncDir(dir) {
     if (process.platform === 'win32') return;
     const fd = fs.openSync(dir, 'r');
     try { fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+}
+
+function syncSidecar(dir, files) {
+    for (const name of files) syncFile(path.join(dir, name));
+    const folders = [...new Set(files.map(name => path.dirname(path.join(dir, name))))]
+        .sort((a, b) => b.length - a.length);
+    for (const folder of folders) syncDir(folder);
+    syncDir(dir);
 }
 
 function writeJson(file, value) {
@@ -53,25 +72,26 @@ function sidecarHash(sidecar, files) {
 export function inspectArchive(file, sidecar = `${file}.unpacked`) {
     if (!fs.statSync(file).isFile() || fs.statSync(file).size < 1024) throw new Error(`Invalid ASAR size: ${file}`);
     asar.uncache(file);
-    const entries = asar.listPackage(file, { isPack: true });
+    const entries = asar.listPackage(file, { isPack: true }).map(entry => entry.replaceAll('\\', '/'));
     if (!entries.some(entry => entry.endsWith(' : /dist/preload.js'))) throw new Error(`ASAR missing preload: ${file}`);
     const unpacked = entries.filter(entry => entry.startsWith('unpack : '))
         .map(entry => entry.slice('unpack : /'.length))
-        .filter(name => !('files' in asar.statFile(file, name))).sort();
+        .filter(name => !('files' in asar.statFile(file, name.split('/').join(path.sep)))).sort();
     const unpackedSha256 = sidecarHash(sidecar, unpacked);
     for (const entry of entries) {
         const name = entry.slice(entry.indexOf(' : /') + 4);
-        const info = asar.statFile(file, name);
+        const archiveName = name.split('/').join(path.sep);
+        const info = asar.statFile(file, archiveName);
         if ('files' in info || 'link' in info) continue;
         if (!info.unpacked) {
-            const bytes = asar.extractFile(file, name);
+            const bytes = asar.extractFile(file, archiveName);
             if (bytes.length !== info.size ||
                 (info.integrity?.hash && crypto.createHash('sha256').update(bytes).digest('hex') !== info.integrity.hash)) {
                 throw new Error(`Packed ASAR entry mismatch: ${name}`);
             }
             continue;
         }
-        const integrity = asar.statFile(file, name).integrity;
+        const integrity = info.integrity;
         if (integrity?.hash && hashFile(path.join(sidecar, name)) !== integrity.hash) {
             throw new Error(`Unpacked ASAR entry hash mismatch: ${name}`);
         }
@@ -106,26 +126,71 @@ export function acquireLock(dir) {
             let owner;
             try { owner = JSON.parse(raw); } catch (readError) {}
             if (Number.isInteger(owner?.pid) && owner.pid > 0) {
-                try { process.kill(owner.pid, 0); throw new Error(`ASAR install already running: ${owner.pid}`); }
-                catch (probe) { if (probe.code !== 'ESRCH') throw probe; }
+                if (processAlive(owner.pid)) throw busyError(`ASAR install already running: ${owner.pid}`);
             } else if (Date.now() - fs.statSync(lock).mtimeMs < 30000) {
-                throw new Error('ASAR lock is incomplete; retry after 30 seconds');
+                throw busyError('ASAR lock is incomplete; retry after 30 seconds');
             }
             const recoveryGuard = `${lock}.recovery`;
-            try { fs.mkdirSync(recoveryGuard); }
-            catch (guardError) {
-                if (guardError.code === 'EEXIST') throw new Error('ASAR stale lock recovery is in progress');
-                throw guardError;
-            }
+            const releaseGuard = acquireRecoveryGuard(recoveryGuard);
             try {
                 if (fs.readFileSync(lock, 'utf8') !== raw) throw new Error('ASAR lock changed during stale recovery');
                 fs.unlinkSync(lock);
             } finally {
-                fs.rmdirSync(recoveryGuard);
+                releaseGuard();
             }
         }
     }
     throw new Error('Could not acquire ASAR install lock');
+}
+
+function acquireRecoveryGuard(guard) {
+    const ownerFile = path.join(guard, 'owner.json');
+    const token = crypto.randomUUID();
+    for (let attempt = 0; attempt < 3; attempt++) {
+        try {
+            fs.mkdirSync(guard);
+            try {
+                fs.writeFileSync(ownerFile, JSON.stringify({ pid: process.pid, token }), { flag: 'wx' });
+                syncFile(ownerFile);
+            } catch (error) {
+                if (fs.existsSync(ownerFile)) fs.unlinkSync(ownerFile);
+                fs.rmdirSync(guard);
+                throw error;
+            }
+            return () => {
+                if (JSON.parse(fs.readFileSync(ownerFile, 'utf8')).token !== token) throw new Error('ASAR recovery guard ownership changed');
+                fs.unlinkSync(ownerFile);
+                fs.rmdirSync(guard);
+            };
+        } catch (error) {
+            if (error.code !== 'EEXIST') throw error;
+            let rawOwner = null;
+            try { rawOwner = fs.readFileSync(ownerFile, 'utf8'); }
+            catch (readError) { if (readError.code !== 'ENOENT') throw readError; }
+            let owner;
+            try { owner = JSON.parse(rawOwner); } catch (readError) {}
+            let observedMtime;
+            try { observedMtime = fs.statSync(guard).mtimeMs; }
+            catch (statError) { if (statError.code === 'ENOENT') continue; throw statError; }
+            if (Number.isInteger(owner?.pid) && owner.pid > 0) {
+                if (processAlive(owner.pid)) throw busyError('ASAR stale lock recovery is in progress');
+            } else if (Date.now() - observedMtime < 30000) {
+                throw busyError('ASAR stale lock recovery is in progress');
+            }
+            const abandoned = `${guard}.stale-${unique()}`;
+            try { fs.renameSync(guard, abandoned); }
+            catch (renameError) { if (renameError.code === 'ENOENT') continue; throw renameError; }
+            let movedOwner = null;
+            try { movedOwner = fs.readFileSync(path.join(abandoned, 'owner.json'), 'utf8'); }
+            catch (readError) { if (readError.code !== 'ENOENT') throw readError; }
+            if (movedOwner !== rawOwner || fs.statSync(abandoned).mtimeMs !== observedMtime) {
+                if (!fs.existsSync(guard)) fs.renameSync(abandoned, guard);
+                throw busyError('ASAR recovery guard changed during stale recovery');
+            }
+            fs.rmSync(abandoned, { recursive: true });
+        }
+    }
+    throw busyError('ASAR stale lock recovery is in progress');
 }
 
 function verifyBaseline(dir, sha) {
@@ -154,6 +219,7 @@ function saveBaseline(dir, source, sidecar, label) {
             if (hashFile(temp) !== sha) throw new Error('ASAR baseline copy hash mismatch');
             inspectArchive(temp);
             syncFile(temp);
+            if (info.unpacked.length) syncSidecar(`${temp}.unpacked`, info.unpacked);
             fs.renameSync(temp, target);
             if (info.unpacked.length) fs.renameSync(`${temp}.unpacked`, `${target}.unpacked`);
             syncDir(dir);
@@ -163,7 +229,18 @@ function saveBaseline(dir, source, sidecar, label) {
         }
     }
     if (info.unpacked.length && !fs.existsSync(`${target}.unpacked`)) {
-        fs.cpSync(sidecar, `${target}.unpacked`, { recursive: true, errorOnExist: true, force: false });
+        const stagedSidecar = `${target}.unpacked.new-${unique()}`;
+        try {
+            fs.cpSync(sidecar, stagedSidecar, { recursive: true, errorOnExist: true, force: false });
+            if (sidecarHash(stagedSidecar, info.unpacked) !== info.unpackedSha256) {
+                throw new Error('ASAR baseline sidecar copy hash mismatch');
+            }
+            syncSidecar(stagedSidecar, info.unpacked);
+            fs.renameSync(stagedSidecar, `${target}.unpacked`);
+            syncDir(dir);
+        } finally {
+            if (fs.existsSync(stagedSidecar)) fs.rmSync(stagedSidecar, { recursive: true });
+        }
     }
     if (!fs.existsSync(`${target}.json`)) writeJson(`${target}.json`, {
         sha256: sha, size: info.size, version: info.version,
@@ -200,11 +277,28 @@ export function prepareBaseline(dir) {
     return baseline.file;
 }
 
-export function recover(dir) {
+export function recover(dir, { rescueSidecar = false } = {}) {
+    if (fs.existsSync(restoreMarkerPath(dir))) recoverPendingRestore(dir);
     const live = livePath(dir);
     const rollback = `${live}.rollback`;
     if (!fs.existsSync(rollback)) return;
-    const previous = inspectArchive(rollback, `${live}.unpacked`);
+    let previous;
+    try { previous = inspectArchive(rollback, `${live}.unpacked`); }
+    catch (error) {
+        if (!fs.existsSync(pointerPath(dir))) throw error;
+        const { sha256 } = JSON.parse(fs.readFileSync(pointerPath(dir), 'utf8'));
+        verifyBaseline(dir, sha256);
+        if (fs.existsSync(live)) {
+            if (!rescueSidecar) throw error;
+            const preserved = `${rollback}.rescue-${unique()}`;
+            fs.renameSync(rollback, preserved);
+            console.warn(`[ASAR] 保留无法与当前 sidecar 校验的回滚包: ${preserved}`);
+        } else {
+            fs.renameSync(rollback, live);
+        }
+        syncDir(dir);
+        return;
+    }
     if (fs.existsSync(live)) {
         let current;
         try {
@@ -224,6 +318,75 @@ export function recover(dir) {
     fs.renameSync(rollback, live);
     syncDir(dir);
     inspectArchive(live);
+}
+
+function readRestoreMarker(dir) {
+    const marker = JSON.parse(fs.readFileSync(restoreMarkerPath(dir), 'utf8'));
+    if (marker.mode !== 'restore' || !SHA.test(marker.sha256) ||
+        !/^app\.asar\.restore-[0-9a-f-]+$/.test(marker.next) ||
+        typeof marker.hadLive !== 'boolean' || typeof marker.hadSidecar !== 'boolean') {
+        throw new Error('Invalid ASAR restore marker; manual review required');
+    }
+    return { ...marker, next: path.join(dir, marker.next) };
+}
+
+function cleanupRestore(dir, marker) {
+    const live = livePath(dir);
+    if (fs.existsSync(`${live}.rollback`)) fs.unlinkSync(`${live}.rollback`);
+    if (fs.existsSync(`${live}.unpacked.rollback`)) fs.rmSync(`${live}.unpacked.rollback`, { recursive: true });
+    if (fs.existsSync(marker.next)) fs.unlinkSync(marker.next);
+    if (fs.existsSync(`${marker.next}.unpacked`)) fs.rmSync(`${marker.next}.unpacked`, { recursive: true });
+    fs.unlinkSync(restoreMarkerPath(dir));
+    syncDir(dir);
+}
+
+function recoverPendingRestore(dir) {
+    const marker = readRestoreMarker(dir);
+    const baseline = verifyBaseline(dir, marker.sha256);
+    const live = livePath(dir);
+    const sidecar = `${live}.unpacked`;
+    let restored = false;
+    try {
+        const info = inspectArchive(live);
+        restored = fs.existsSync(sidecar) && hashFile(live) === marker.sha256 &&
+            info.unpackedSha256 === baseline.info.unpackedSha256;
+    } catch (error) {}
+    if (restored) {
+        cleanupRestore(dir, marker);
+        return;
+    }
+    const discarded = [];
+    if (fs.existsSync(`${live}.rollback`)) {
+        if (fs.existsSync(live)) {
+            const failed = `${live}.failed-${unique()}`;
+            fs.renameSync(live, failed);
+            discarded.push(failed);
+        }
+        fs.renameSync(`${live}.rollback`, live);
+    } else if (!marker.hadLive && fs.existsSync(live)) {
+        const failed = `${live}.failed-${unique()}`;
+        fs.renameSync(live, failed);
+        discarded.push(failed);
+    } else if (marker.hadLive && !fs.existsSync(live)) {
+        throw new Error('Original ASAR is missing during restore rollback');
+    }
+    if (fs.existsSync(`${sidecar}.rollback`)) {
+        if (fs.existsSync(sidecar)) {
+            const failed = `${sidecar}.failed-${unique()}`;
+            fs.renameSync(sidecar, failed);
+            discarded.push(failed);
+        }
+        fs.renameSync(`${sidecar}.rollback`, sidecar);
+    } else if (!marker.hadSidecar && fs.existsSync(sidecar)) {
+        const failed = `${sidecar}.failed-${unique()}`;
+        fs.renameSync(sidecar, failed);
+        discarded.push(failed);
+    } else if (marker.hadSidecar && !fs.existsSync(sidecar)) {
+        throw new Error('Original ASAR sidecar is missing during restore rollback');
+    }
+    syncDir(dir);
+    cleanupRestore(dir, marker);
+    for (const failed of discarded) fs.rmSync(failed, { recursive: true });
 }
 
 function replace(dir, next) {
@@ -255,15 +418,19 @@ function replace(dir, next) {
 
 export function extractBaseline(file, dest) { asar.extractAll(file, dest); }
 
+export function asarUnpackGlob(unpacked) {
+    const dirs = [...new Set(unpacked.map(name => name.startsWith('node_modules/')
+        ? name.split('/').slice(0, 2).join('/') : path.posix.dirname(name)))];
+    if (dirs.some(name => name === '.' || /[{}*?\[\],]/.test(name))) throw new Error('Unsupported unpacked layout');
+    return dirs.length === 1 ? dirs[0] : `{${dirs.join(',')}}`;
+}
+
 export async function packAndReplace(dir, extracted, baseline) {
     const original = inspectArchive(baseline);
     const next = path.join(dir, `app.asar.new-${unique()}`);
-    const dirs = [...new Set(original.unpacked.map(name => name.startsWith('node_modules/')
-        ? name.split('/').slice(0, 2).join(path.sep) : path.dirname(name)))];
-    if (dirs.some(name => name === '.' || /[{}*?\[\],]/.test(name))) throw new Error('Unsupported unpacked layout');
     try {
         await asar.createPackageWithOptions(extracted, next,
-            dirs.length ? { unpackDir: dirs.length === 1 ? dirs[0] : `{${dirs.join(',')}}` } : {});
+            original.unpacked.length ? { unpackDir: asarUnpackGlob(original.unpacked) } : {});
         const packed = inspectArchive(next);
         if (packed.version !== original.version || !packed.localized ||
             packed.unpacked.join('\0') !== original.unpacked.join('\0') ||
@@ -283,21 +450,51 @@ export async function packAndReplace(dir, extracted, baseline) {
 }
 
 export function restore(dir) {
+    if (fs.existsSync(restoreMarkerPath(dir))) recoverPendingRestore(dir);
+    if (fs.existsSync(`${livePath(dir)}.rollback`)) recover(dir, { rescueSidecar: true });
     const pointer = pointerPath(dir);
     if (!fs.existsSync(pointer)) importLegacy(dir, null);
     const { sha256 } = JSON.parse(fs.readFileSync(pointer, 'utf8'));
     const baseline = verifyBaseline(dir, sha256);
     const live = livePath(dir);
-    if (sidecarHash(`${live}.unpacked`, baseline.info.unpacked) !== baseline.info.unpackedSha256) {
-        throw new Error('Installed unpacked sidecar differs from baseline');
-    }
     const next = path.join(dir, `app.asar.restore-${unique()}`);
+    const nextSidecar = `${next}.unpacked`;
+    const sidecar = `${live}.unpacked`;
     try {
         fs.copyFileSync(baseline.file, next, fs.constants.COPYFILE_EXCL);
+        if (baseline.info.unpacked.length) {
+            fs.cpSync(`${baseline.file}.unpacked`, nextSidecar, { recursive: true, errorOnExist: true, force: false });
+        } else {
+            fs.mkdirSync(nextSidecar);
+        }
         if (hashFile(next) !== sha256) throw new Error('ASAR restore copy hash mismatch');
+        const staged = inspectArchive(next);
+        if (staged.unpackedSha256 !== baseline.info.unpackedSha256) throw new Error('ASAR restore sidecar copy hash mismatch');
         syncFile(next);
-        replace(dir, next);
+        syncSidecar(nextSidecar, staged.unpacked);
+        const marker = { mode: 'restore', sha256, next: path.basename(next),
+            hadLive: fs.existsSync(live), hadSidecar: fs.existsSync(sidecar) };
+        if (fs.existsSync(restoreMarkerPath(dir)) || fs.existsSync(`${live}.rollback`) ||
+            fs.existsSync(`${sidecar}.rollback`)) throw new Error('Unresolved ASAR transaction exists');
+        writeJson(restoreMarkerPath(dir), marker);
+        try {
+            if (marker.hadLive) fs.renameSync(live, `${live}.rollback`);
+            if (marker.hadSidecar) fs.renameSync(sidecar, `${sidecar}.rollback`);
+            fs.renameSync(nextSidecar, sidecar);
+            fs.renameSync(next, live);
+            syncDir(dir);
+            if (hashFile(live) !== sha256 ||
+                inspectArchive(live).unpackedSha256 !== baseline.info.unpackedSha256) {
+                throw new Error('ASAR restore pair verification failed');
+            }
+            recoverPendingRestore(dir);
+        } catch (error) {
+            try { recoverPendingRestore(dir); }
+            catch (rollbackError) { throw new AggregateError([error, rollbackError], 'ASAR restore and rollback failed'); }
+            throw error;
+        }
     } finally {
         if (fs.existsSync(next)) fs.unlinkSync(next);
+        if (fs.existsSync(nextSidecar)) fs.rmSync(nextSidecar, { recursive: true });
     }
 }

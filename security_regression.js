@@ -14,6 +14,8 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'antigravity-hub-test-'));
 const fixtureConfig = path.join(fixture, 'wallpaper_config.json');
 const calls = path.join(fixture, 'localizer.calls');
 const failFlag = path.join(fixture, 'localizer.fail');
+const busyFlag = path.join(fixture, 'localizer.busy');
+const exit75Flag = path.join(fixture, 'localizer.exit75');
 const waitFlag = path.join(fixture, 'localizer.wait');
 let server;
 let competingServer;
@@ -30,6 +32,8 @@ function prepareFixture() {
     fs.writeFileSync(path.join(fixture, 'wallpaper_engine_reader.js'), 'module.exports = {};\n');
     fs.writeFileSync(path.join(fixture, 'localization_engine.js'), [
         "const fs = require('fs');",
+        "if (fs.existsSync(process.env.HUB_STUB_BUSY)) { process.stderr.write('ASAR_BUSY\\n'); process.exit(75); }",
+        "if (fs.existsSync(process.env.HUB_STUB_EXIT75)) process.exit(75);",
         "fs.appendFileSync(process.env.HUB_STUB_CALLS, JSON.stringify(process.argv.slice(2)) + '\\n');",
         "if (fs.existsSync(process.env.HUB_STUB_WAIT)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 350);",
         "if (fs.existsSync(process.env.HUB_STUB_FAIL)) {",
@@ -43,7 +47,8 @@ function prepareFixture() {
 function spawnHub() {
     const child = spawn(process.execPath, [path.join(fixture, 'wallpaper_hub_server.js')], {
         cwd: fixture, stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, HUB_STUB_CALLS: calls, HUB_STUB_FAIL: failFlag, HUB_STUB_WAIT: waitFlag }
+        env: { ...process.env, HUB_STUB_CALLS: calls, HUB_STUB_FAIL: failFlag,
+            HUB_STUB_BUSY: busyFlag, HUB_STUB_EXIT75: exit75Flag, HUB_STUB_WAIT: waitFlag }
     });
     child.output = { stdout: '', stderr: '' };
     child.stdout.on('data', chunk => { child.output.stdout += chunk; });
@@ -164,6 +169,16 @@ async function main() {
     fs.renameSync(fixtureConfig + '.saved', fixtureConfig);
 
     fs.unlinkSync(failFlag);
+    fs.writeFileSync(busyFlag, '');
+    const crossProcessBusy = await post('/api/apply', { workshopId: '123', autoRestart: false });
+    assert.strictEqual(crossProcessBusy.status, 409);
+    assert.deepStrictEqual(JSON.parse(crossProcessBusy.text),
+        { success: false, code: 'APPLY_BUSY', error: '已有应用任务正在执行。' });
+    assert.strictEqual(fs.readFileSync(calls, 'utf8').trim().split('\n').length, 2);
+    fs.unlinkSync(busyFlag);
+    fs.writeFileSync(exit75Flag, '');
+    assert.strictEqual((await post('/api/apply', { workshopId: '123', autoRestart: false })).status, 500);
+    fs.unlinkSync(exit75Flag);
     fs.writeFileSync(waitFlag, '');
     const firstApply = post('/api/apply', { workshopId: '123', autoRestart: true });
     for (let attempt = 0; attempt < 100; attempt++) {
