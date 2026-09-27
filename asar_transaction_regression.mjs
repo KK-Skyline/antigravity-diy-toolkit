@@ -14,6 +14,18 @@ const source = path.join(fixture, 'source');
 const resources = path.join(fixture, 'resources');
 const live = path.join(resources, 'app.asar');
 const hash = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+const snapshot = root => {
+    const entries = [];
+    const visit = (dir, prefix = '') => {
+        for (const item of fs.readdirSync(dir, { withFileTypes: true })) {
+            const name = path.posix.join(prefix, item.name);
+            entries.push(item.isDirectory() ? [name, 'dir'] : [name, hash(path.join(dir, item.name))]);
+            if (item.isDirectory()) visit(path.join(dir, item.name), name);
+        }
+    };
+    visit(root);
+    return entries.sort((a, b) => a[0].localeCompare(b[0]));
+};
 const signature = '/* --- ANTIGRAVITY CHINESE LOCALIZATION START --- */';
 
 try {
@@ -91,13 +103,59 @@ try {
     assert.deepEqual(fs.readFileSync(path.join(resources, 'app.asar.baseline.json')), unconfirmedPointer);
     assert.equal(hash(live), originalHash);
     assert.equal(hash(backup), backupHash);
+    fs.copyFileSync(live, `${live}.rollback`);
+    assert.throws(() => tx.restore(resources), /explicit confirmation/);
+    assert.equal(hash(live), originalHash);
+    assert.equal(hash(`${live}.rollback`), originalHash);
+    fs.writeFileSync(live, 'corrupt live');
+    const corruptLive = fs.readFileSync(live);
+    const namesBeforeReject = fs.readdirSync(resources).sort();
+    assert.throws(() => tx.restore(resources), /explicit confirmation/);
+    assert.deepEqual(fs.readdirSync(resources).sort(), namesBeforeReject);
+    assert.deepEqual(fs.readFileSync(live), corruptLive);
+    assert.equal(hash(`${live}.rollback`), originalHash);
+    fs.copyFileSync(`${live}.rollback`, live);
+    fs.unlinkSync(`${live}.rollback`);
+    const legacyMetadata = { ...JSON.parse(fs.readFileSync(`${backup}.json`, 'utf8')),
+        source: 'unlocalized-live' };
+    fs.writeFileSync(`${backup}.json`, JSON.stringify(legacyMetadata));
+    assert.throws(() => tx.restore(resources), /explicit confirmation/);
     tx.restore(resources, { confirmUnverified: true });
     assert.equal(JSON.parse(fs.readFileSync(path.join(resources, 'app.asar.baseline.json'))).userConfirmedUnverified, true);
+    assert.equal(JSON.parse(fs.readFileSync(`${backup}.json`)).source, 'user-confirmed-unverified-live');
     tx.restore(resources);
     const confirmedMetadata = fs.readFileSync(`${backup}.json`);
-    fs.writeFileSync(`${backup}.json`, JSON.stringify({ ...JSON.parse(confirmedMetadata), size: 1 }));
-    assert.throws(() => tx.restore(resources), /verification failed/);
+    const metaObject = JSON.parse(confirmedMetadata);
+    const malformedMetadata = [
+        { ...metaObject, sha256: '0'.repeat(64) }, { ...metaObject, size: 1 },
+        { ...metaObject, version: 'forged' }, { ...metaObject, unpackedSha256: '0'.repeat(64) },
+        { ...metaObject, source: 'forged-official-source' }, { ...metaObject, extra: true },
+        ...Object.keys(metaObject).map(key => {
+            const copy = { ...metaObject };
+            delete copy[key];
+            return copy;
+        })
+    ];
+    for (const candidate of malformedMetadata) {
+        fs.writeFileSync(`${backup}.json`, JSON.stringify(candidate));
+        const beforeRejected = snapshot(resources);
+        assert.throws(() => tx.prepareBaseline(resources));
+        assert.throws(() => tx.restore(resources));
+        assert.deepEqual(snapshot(resources), beforeRejected);
+    }
     fs.writeFileSync(`${backup}.json`, confirmedMetadata);
+    for (const candidate of [
+        { sha256: backupHash, userConfirmedUnverified: true, extra: true },
+        { userConfirmedUnverified: true },
+        { sha256: backupHash, userConfirmedUnverified: 'true' },
+        { sha256: backupHash, userConfirmedUnverified: false }
+    ]) {
+        fs.writeFileSync(path.join(resources, 'app.asar.baseline.json'), JSON.stringify(candidate));
+        const beforeRejected = snapshot(resources);
+        assert.throws(() => tx.prepareBaseline(resources));
+        assert.throws(() => tx.restore(resources));
+        assert.deepEqual(snapshot(resources), beforeRejected);
+    }
     fs.writeFileSync(path.join(resources, 'app.asar.baseline.json'),
         JSON.stringify({ sha256: '0'.repeat(64), userConfirmedUnverified: true }));
     assert.throws(() => tx.restore(resources));
@@ -232,6 +290,25 @@ try {
     assert.equal(busyRun.status, 75, busyRun.stderr);
     assert.match(busyRun.stderr, /ASAR_BUSY/);
     assert.equal(hash(integrationLive), localizedHash);
+    const integrationPointer = path.join(integrationResources, 'app.asar.baseline.json');
+    fs.writeFileSync(integrationPointer,
+        JSON.stringify({ sha256: JSON.parse(fs.readFileSync(integrationPointer)).sha256 }));
+    fs.copyFileSync(integrationLive, `${integrationLive}.rollback`);
+    const beforeUnconfirmedCli = snapshot(integrationResources);
+    for (const operation of [[], ['--huifu']]) {
+        const rejected = spawnSync(process.execPath, [enginePath, ...operation, '--install-dir', integration],
+            { env, encoding: 'utf8' });
+        assert.equal(rejected.status, 1, rejected.stderr);
+        assert.match(rejected.stderr, /explicit confirmation/);
+        assert.deepEqual(snapshot(integrationResources), beforeUnconfirmedCli);
+    }
+    const confirmedRestore = spawnSync(process.execPath,
+        [enginePath, '--huifu', '--confirm-unverified-baseline', '--install-dir', integration],
+        { env, encoding: 'utf8' });
+    assert.equal(confirmedRestore.status, 0, confirmedRestore.stderr);
+    assert.equal(JSON.parse(fs.readFileSync(integrationPointer)).userConfirmedUnverified, true);
+    assert.equal(hash(integrationLive), originalHash);
+    assert.equal(fs.existsSync(`${integrationLive}.rollback`), false);
     const restoreRun = spawnSync(process.execPath, [enginePath, '--huifu', '--install-dir', integration], { env, encoding: 'utf8' });
     assert.equal(restoreRun.status, 0, restoreRun.stderr);
     assert.equal(hash(integrationLive), originalHash);
@@ -258,6 +335,16 @@ try {
     assert.equal(preservedRollbacks.length, 1);
     assert.equal(hash(path.join(integrationResources, preservedRollbacks[0])), originalHash);
     if (process.platform !== 'win32') {
+        const twInstall = path.join(fixture, 'tw-install');
+        const twResources = path.join(twInstall, 'resources');
+        fs.mkdirSync(twResources, { recursive: true });
+        fs.copyFileSync(live, path.join(twResources, 'app.asar'));
+        fs.cpSync(`${live}.unpacked`, path.join(twResources, 'app.asar.unpacked'), { recursive: true });
+        const twRun = spawnSync(process.execPath,
+            [enginePath, '--tw', '--confirm-unverified-baseline', '--install-dir', twInstall],
+            { env, encoding: 'utf8' });
+        assert.equal(twRun.status, 0, twRun.stderr);
+        assert.equal(tx.inspectArchive(path.join(twResources, 'app.asar')).localized, true);
         const isolatedEngine = path.join(fixture, 'isolated-engine');
         const isolatedInstall = path.join(fixture, 'isolated-install');
         const isolatedResources = path.join(isolatedInstall, 'resources');
@@ -316,7 +403,16 @@ try {
         { encoding: 'utf8' });
     assert.notEqual(crashRestore.status, 0);
     assert.equal(fs.existsSync(`${live}.restore.pending`), true);
-    tx.recover(resources);
+    const pendingPointer = path.join(resources, 'app.asar.baseline.json');
+    fs.writeFileSync(pendingPointer, JSON.stringify({ sha256: backupHash }));
+    fs.writeFileSync(`${backup}.json`, JSON.stringify({ ...JSON.parse(fs.readFileSync(`${backup}.json`)), source: 'unlocalized-live' }));
+    const beforePendingReject = snapshot(resources);
+    assert.throws(() => tx.restore(resources), /explicit confirmation/);
+    assert.throws(() => tx.recover(resources), /explicit confirmation/);
+    assert.deepEqual(snapshot(resources), beforePendingReject);
+    tx.recover(resources, { confirmUnverified: true });
+    assert.equal(JSON.parse(fs.readFileSync(pendingPointer)).userConfirmedUnverified, true);
+    assert.equal(JSON.parse(fs.readFileSync(`${backup}.json`)).source, 'user-confirmed-unverified-live');
     assert.equal(hash(live), originalHash);
     assert.equal(hash(liveSidecarFile), backupSidecarHash);
     assert.equal(tx.inspectArchive(live).unpackedSha256, baselineSidecarDigest);
@@ -452,6 +548,15 @@ try {
             { encoding: 'utf8' });
         assert.equal(configCrash.signal, 'SIGKILL', configCrash.stderr);
         assert.ok(fs.existsSync(path.join(mixedResources, 'app.asar.config.pending')));
+        const mixedPointer = path.join(mixedResources, 'app.asar.baseline.json');
+        const confirmedMixedPointer = fs.readFileSync(mixedPointer);
+        fs.writeFileSync(mixedPointer, JSON.stringify({ sha256: JSON.parse(confirmedMixedPointer).sha256 }));
+        const beforeConfigReject = snapshot(mixedResources);
+        const configBeforeReject = fs.readFileSync(mixedConfig);
+        assert.throws(() => tx.recover(mixedResources, { configFile: mixedConfig }), /explicit confirmation/);
+        assert.deepEqual(snapshot(mixedResources), beforeConfigReject);
+        assert.deepEqual(fs.readFileSync(mixedConfig), configBeforeReject);
+        fs.writeFileSync(mixedPointer, confirmedMixedPointer);
         assert.throws(() => tx.restore(mixedResources), /Unresolved ASAR config transaction/);
         tx.recover(mixedResources, { configFile: mixedConfig });
         assert.equal(hash(mixedLive), committedMixedHash);

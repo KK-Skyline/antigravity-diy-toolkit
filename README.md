@@ -77,7 +77,7 @@
 
 ### 3. 一键安装中文汉化
 1. 退出 Antigravity 客户端；
-2. 首次安装或客户端升级后，先自行核对当前 `app.asar` 的来源与哈希；确认接受其来源后，运行 `node localization_engine.js --confirm-unverified-baseline` 建立版本化基线。此确认不等于工具已验证官方签名；未经确认时安装会停止，Wallpaper Hub 也不会自动建立基线；
+2. 首次安装或客户端升级后，先自行核对当前 `app.asar` 的来源与哈希；确认接受其来源后，运行 `node localization_engine.js --confirm-unverified-baseline`。该命令会建立版本化基线并**同时完成本次简体安装**，不是仅备份；此确认不等于工具已验证官方签名。未经确认时安装会停止，Wallpaper Hub 也不会自动建立基线；
 3. 后续可双击运行 **`双击安装中文汉化.bat`**（macOS 运行 `.command`）；
 4. 按照提示选择品牌显示偏好；
 5. 重新打开 Antigravity。
@@ -103,6 +103,9 @@ node localization_engine.js --brand-title english
 
 # 从已保存基线恢复英文状态
 node localization_engine.js --huifu
+
+# 仅在旧版基线 pointer 缺少确认标志、且已自行核对来源时，显式确认后恢复
+node localization_engine.js --huifu --confirm-unverified-baseline
 ```
 
 ---

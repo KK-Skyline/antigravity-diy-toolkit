@@ -1908,6 +1908,7 @@ async function main() {
     const transaction = isV2 || hubConfig ? await import('./asar_transaction.mjs') : null;
     const releaseLock = transaction ? transaction.acquireLock(resourcesDir) : null;
     try {
+    if (isV2) transaction.preflightBaselineConsent(resourcesDir, { confirmUnverified });
     wasAppRunning = checkIfAppIsRunning();
     if (wasAppRunning && noKill) {
         throw new Error('Antigravity 正在运行；请先手动关闭，或明确使用 --close-app。');
@@ -1919,7 +1920,7 @@ async function main() {
     if (isV2) {
         if (checkIfAppIsRunning()) throw new Error('Antigravity 在锁定后重新启动，已停止写入。');
         transaction.recover(resourcesDir, { rescueSidecar: huifu,
-            configFile: path.join(__dirname, 'wallpaper_config.json') });
+            configFile: path.join(__dirname, 'wallpaper_config.json'), confirmUnverified });
     }
     let configPlan = null;
     if (hubConfig) {

@@ -34,7 +34,7 @@
 
 ## 📂 專案檔案結構
 - **`双击安装繁体中文.bat`** / **`.command`**：Windows / macOS 一鍵繁體中文化執行入口。
-- **`双击卸载还原官方英文.bat`** / **`.command`**：Windows / macOS 一鍵完美恢復原版入口。
+- **`双击卸载还原官方英文.bat`** / **`.command`**：Windows / macOS 從已保存基線恢復英文；檔名不代表已驗證官方來源。
 - **`localization_engine.js`**：核心中文化邏輯，負責 app.asar 的解包、程式碼注入、重新打包以及 macOS 下的自動深度重新簽名。
 - **`dicts_tw/`**：中文化字典資料夾，內含按模組分類 of JSON 對照翻譯字典。
 
@@ -63,11 +63,12 @@
 
 ### 2. 一鍵安裝中文化
 1. **完全退出** Antigravity 編程軟體。
-2. 進入您解壓或複製出來的 `antigravity2-cn` 資料夾：
+2. 首次安裝或軟體更新後，先自行核對目前 `app.asar` 的來源與雜湊；確認接受其來源後，在本專案資料夾執行 `node localization_engine.js --tw --confirm-unverified-baseline`。此命令會建立版本化基線並**同時完成本次繁體安裝**，不是僅備份；工具不會驗證官方簽章。
+3. 後續可進入您解壓或複製出來的 `antigravity2-cn` 資料夾：
    - **Windows**：雙擊執行 **`双击安装繁体中文.bat`**。
    - **macOS**：雙擊執行 **`双击安装繁体中文.command`**。
-3. 依提示選擇左上角品牌顯示方式：顯示英文 Antigravity（預設推薦）、不顯示品牌名稱、或顯示繁體中文品牌名。
-4. 執行完成後，重新啟動 Antigravity 軟体，即可暢享全繁體中文介面！
+4. 依提示選擇左上角品牌顯示方式：顯示英文 Antigravity（預設推薦）、不顯示品牌名稱、或顯示繁體中文品牌名。
+5. 執行完成後，重新啟動 Antigravity。
 
 ### 品牌顯示命令列參數
 
@@ -88,10 +89,10 @@ node localization_engine.js --tw --brand-title translated
 
 ### 3. 一鍵卸載還原
 1. **完全退出** Antigravity 編程軟體。
-2. 在當前資料夾下：
+2. 已確認的基線可在當前資料夾下執行：
    - **Windows**：雙擊執行 **`双击卸载还原官方英文.bat`**。
    - **macOS**：雙擊執行 **`双击卸载还原官方英文.command`**。
-3. 執行完成後，軟體將自動清除所有中文化注入，無痕恢復至官方原版英文狀態。
+3. 若舊版基線 pointer 缺少確認標誌，先自行核對備份來源，再執行 `node localization_engine.js --huifu --confirm-unverified-baseline`；未確認時會停止且不更動 ASAR。恢復目標是**已保存基線**，不是工具可證明的官方原版。
 
 ---
 
@@ -105,7 +106,7 @@ node localization_engine.js --tw --brand-title translated
 
 本引擎採用 **ASAR 包注入模式**，專為 **Antigravity 2.0+** 的 Electron 架構量身定制：
 1. **運行狀態檢查**：預設在 Antigravity 仍運行時停止；只有明確使用 `--close-app` 才嘗試關閉後操作。
-2. **版本化備份**：操作前保存帶 SHA-256 元資料的基線包，恢復後仍保留備份。舊版 `.bak` 只有在兩份舊備份一致且可解析時才會導入；這不保證官方來源。
+2. **版本化備份**：經使用者顯式確認來源後，操作前保存帶 SHA-256 元資料的基線包，恢復後仍保留備份。舊版 `.bak` 只有在兩份舊備份一致、可解析且使用者顯式確認後才會導入；這不保證官方來源。
 3. **精準注入**：
    - 注入 `preload.js`：採用 WeakSet 記錄與 Shadow DOM 穿透，啟動高效的 `MutationObserver` 引擎，動態監測並將渲染層文字翻譯為繁體中文。
    - 注入 `menu.js`：深度補丁系統級標題列選單。
@@ -178,7 +179,7 @@ node localization_engine.js --tw --brand-title translated
   - **macOS**：若雙擊執行 `.command` 提示無法開啟或沒有執行權限，可在終端機中執行 `chmod +x *.command` 來授權。如果是系統安全攔截，請在「系統設定 -> 隱私權與安全性」中點擊「仍要開啟」。本中文化包已內建自動重新簽名機制，修改後會重新進行 Ad-hoc 簽名以防止 macOS 提示應用程式損壞。
 
 ### 3）軟體官方更新後，中文化失效了怎麼辦？
-* 軟體升級時，官方會覆蓋 `app.asar` 檔案。您無需擔心，直接完全退出軟體，重新雙擊執行 **`双击安装繁体中文.bat`** 重新注入一次即可完美恢復繁體中文。
+* 軟體升級可能覆蓋 `app.asar`。完全退出後，先核對新版 `app.asar` 的來源與雜湊，再執行 `node localization_engine.js --tw --confirm-unverified-baseline` 建立新版基線並同時安裝；未確認時不得直接雙擊重裝。
 
 ---
 

@@ -200,26 +200,65 @@ function acquireRecoveryGuard(guard) {
     throw busyError('ASAR stale lock recovery is in progress');
 }
 
-function verifyBaseline(dir, sha) {
+const BASELINE_SOURCES = new Set(['user-confirmed-unverified-live', 'user-confirmed-unverified-legacy-pair']);
+const LEGACY_SOURCES = new Set(['unlocalized-live', 'matching-legacy-pair']);
+
+function readPointer(dir) {
+    const pointer = JSON.parse(fs.readFileSync(pointerPath(dir), 'utf8'));
+    const keys = pointer && typeof pointer === 'object' && !Array.isArray(pointer) ? Object.keys(pointer).sort() : [];
+    if (!SHA.test(pointer?.sha256) ||
+        (keys.join(',') !== 'sha256' && keys.join(',') !== 'sha256,userConfirmedUnverified') ||
+        ('userConfirmedUnverified' in pointer && typeof pointer.userConfirmedUnverified !== 'boolean')) {
+        throw new Error('Invalid ASAR baseline pointer');
+    }
+    return pointer;
+}
+
+function verifyBaseline(dir, sha, { allowLegacySource = false } = {}) {
     if (!SHA.test(sha)) throw new Error('Invalid ASAR baseline pointer');
     const file = backupPath(dir, sha);
     const meta = JSON.parse(fs.readFileSync(`${file}.json`, 'utf8'));
+    const keys = meta && typeof meta === 'object' && !Array.isArray(meta) ? Object.keys(meta).sort().join(',') : '';
+    const legacySource = LEGACY_SOURCES.has(meta?.source);
+    if (keys !== 'sha256,size,source,unpackedSha256,version' ||
+        !Number.isSafeInteger(meta.size) || meta.size <= 0 ||
+        typeof meta.version !== 'string' || !meta.version || !SHA.test(meta.unpackedSha256) ||
+        (!BASELINE_SOURCES.has(meta.source) && !(allowLegacySource && legacySource))) {
+        throw new Error('Invalid ASAR baseline metadata');
+    }
     const info = inspectArchive(file);
     if (info.localized || meta.sha256 !== sha || hashFile(file) !== sha ||
         meta.version !== info.version || meta.size !== info.size ||
         meta.unpackedSha256 !== info.unpackedSha256) {
         throw new Error(`ASAR baseline verification failed: ${file}`);
     }
-    return { file, info };
+    return { file, info, meta, legacySource };
 }
 
 function verifiedConfirmedBaseline(dir, { sha256, userConfirmedUnverified }, confirmUnverified) {
-    const baseline = verifyBaseline(dir, sha256);
+    const baseline = verifyBaseline(dir, sha256, { allowLegacySource: confirmUnverified });
+    if (baseline.legacySource) {
+        writeJson(`${baseline.file}.json`, { ...baseline.meta,
+            source: baseline.meta.source === 'unlocalized-live' ?
+                'user-confirmed-unverified-live' : 'user-confirmed-unverified-legacy-pair' });
+    }
     if (userConfirmedUnverified !== true) {
         if (!confirmUnverified) throw new Error('Existing ASAR baseline requires explicit confirmation of unverified provenance');
         writeJson(pointerPath(dir), { sha256, userConfirmedUnverified: true });
     }
     return baseline;
+}
+
+export function preflightBaselineConsent(dir, { confirmUnverified = false } = {}) {
+    if (!fs.existsSync(pointerPath(dir))) {
+        if (!confirmUnverified) throw new Error('New ASAR baseline requires explicit confirmation of unverified provenance');
+        return;
+    }
+    const pointer = readPointer(dir);
+    if (pointer.userConfirmedUnverified !== true && !confirmUnverified) {
+        throw new Error('Existing ASAR baseline requires explicit confirmation of unverified provenance');
+    }
+    verifyBaseline(dir, pointer.sha256, { allowLegacySource: confirmUnverified });
 }
 
 function saveBaseline(dir, source, sidecar, label) {
@@ -262,6 +301,8 @@ function saveBaseline(dir, source, sidecar, label) {
         sha256: sha, size: info.size, version: info.version,
         unpackedSha256: info.unpackedSha256, source: label
     });
+    const saved = verifyBaseline(dir, sha, { allowLegacySource: true });
+    if (saved.legacySource) writeJson(`${target}.json`, { ...saved.meta, source: label });
     verifyBaseline(dir, sha);
     writeJson(pointerPath(dir), { sha256: sha, userConfirmedUnverified: true });
     return target;
@@ -281,6 +322,7 @@ function importLegacy(dir, version, confirmUnverified) {
 }
 
 export function prepareBaseline(dir, { confirmUnverified = false } = {}) {
+    preflightBaselineConsent(dir, { confirmUnverified });
     if (fs.existsSync(configMarkerPath(dir))) throw new Error('Unresolved ASAR config transaction exists');
     const live = livePath(dir);
     const info = inspectArchive(live);
@@ -290,7 +332,7 @@ export function prepareBaseline(dir, { confirmUnverified = false } = {}) {
         return info.localized ? importLegacy(dir, info.version, true) :
             saveBaseline(dir, live, `${live}.unpacked`, 'user-confirmed-unverified-live');
     }
-    const pointerInfo = JSON.parse(fs.readFileSync(pointer, 'utf8'));
+    const pointerInfo = readPointer(dir);
     const baseline = verifiedConfirmedBaseline(dir, pointerInfo, confirmUnverified);
     const { sha256 } = pointerInfo;
     if (!info.localized) {
@@ -354,7 +396,11 @@ function recoverPendingConfig(dir, configFile) {
     if (discarded) fs.unlinkSync(discarded);
 }
 
-export function recover(dir, { rescueSidecar = false, configFile = null } = {}) {
+export function recover(dir, { rescueSidecar = false, configFile = null, confirmUnverified = false } = {}) {
+    preflightBaselineConsent(dir, { confirmUnverified });
+    if (confirmUnverified && fs.existsSync(pointerPath(dir))) {
+        verifiedConfirmedBaseline(dir, readPointer(dir), true);
+    }
     recoverPendingConfig(dir, configFile);
     if (fs.existsSync(restoreMarkerPath(dir))) recoverPendingRestore(dir);
     const live = livePath(dir);
@@ -510,6 +556,7 @@ function asarUnpackFilesGlob(files, extracted) {
 }
 
 export async function packAndReplace(dir, extracted, baseline, config = null) {
+    preflightBaselineConsent(dir);
     const original = inspectArchive(baseline);
     const next = path.join(dir, `app.asar.new-${unique()}`);
     let configStage = null;
@@ -572,12 +619,16 @@ export async function packAndReplace(dir, extracted, baseline, config = null) {
 }
 
 export function restore(dir, { confirmUnverified = false } = {}) {
+    preflightBaselineConsent(dir, { confirmUnverified });
+    if (confirmUnverified && fs.existsSync(pointerPath(dir))) {
+        verifiedConfirmedBaseline(dir, readPointer(dir), true);
+    }
     if (fs.existsSync(configMarkerPath(dir))) throw new Error('Unresolved ASAR config transaction exists');
     if (fs.existsSync(restoreMarkerPath(dir))) recoverPendingRestore(dir);
-    if (fs.existsSync(`${livePath(dir)}.rollback`)) recover(dir, { rescueSidecar: true });
+    if (fs.existsSync(`${livePath(dir)}.rollback`)) recover(dir, { rescueSidecar: true, confirmUnverified });
     const pointer = pointerPath(dir);
     if (!fs.existsSync(pointer)) importLegacy(dir, null, confirmUnverified);
-    const pointerInfo = JSON.parse(fs.readFileSync(pointer, 'utf8'));
+    const pointerInfo = readPointer(dir);
     const baseline = verifiedConfirmedBaseline(dir, pointerInfo, confirmUnverified);
     const { sha256 } = pointerInfo;
     const live = livePath(dir);
