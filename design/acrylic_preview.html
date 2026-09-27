@@ -1,0 +1,812 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Antigravity 失重亚克力 · 预览稿</title>
+<style>
+/* ============================================================
+   设计 Token —— 最终会原样移植进 theme-acrylic.css
+   ============================================================ */
+:root {
+  --ag-accent: 94 214 200;          /* 由壁纸自动取色覆盖 */
+  --ag-accent-ink: 6 18 16;         /* 强调色上的文字色 */
+  --ag-tint-h: 178;                 /* 玻璃色调随强调色色相 */
+
+  --ag-glass-a: .32;
+  --ag-blur: 0px;
+  --ag-blur-sticky: 12px;       /* 吸顶消息背后是正文，必须保留模糊，否则透字 */
+  --ag-sat: 170%;
+  --ag-noise: .015;
+  --ag-glass-tint: hsl(var(--ag-tint-h) 28% 7% / var(--ag-glass-a));
+  --ag-glass-tint-hi: hsl(var(--ag-tint-h) 26% 10% / calc(var(--ag-glass-a) + .08));
+
+  --ag-r-lg: 22px;
+  --ag-r-md: 14px;
+  --ag-r-sm: 10px;
+  --ag-gap: 13px;
+  --ag-scrim: .34;
+  --ag-wp-bright: .91;
+
+  --ag-fg: 236 242 244;
+  --ag-fg-1: rgb(var(--ag-fg) / .96);
+  --ag-fg-2: rgb(var(--ag-fg) / .72);
+  --ag-fg-3: rgb(var(--ag-fg) / .50);
+  --ag-hairline: rgb(255 255 255 / .08);
+  --ag-state-hover: rgb(255 255 255 / .06);
+  --ag-state-selected: rgb(255 255 255 / .10);
+  --ag-state-primary: rgb(var(--ag-accent) / .16);
+  --ag-state-primary-hover: rgb(var(--ag-accent) / .24);
+  --ag-shadow: 0 18px 50px rgb(0 0 0 / .38), 0 2px 8px rgb(0 0 0 / .22);
+
+  --side-w: 264px;
+  --title-h: 38px;
+  --noise-img: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='180' height='180'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.85' numOctaves='3' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>");
+
+  --font-ui: "Google Sans", "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei UI", "PingFang SC", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; }
+body {
+  background: #05080a;
+  color: var(--ag-fg-1);
+  font: 13.5px/1.5 var(--font-ui);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+}
+button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+svg.i { width: 16px; height: 16px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+::selection { background: rgb(var(--ag-accent) / .32); }
+
+/* 细滚动条：平时隐形，悬停出现 */
+.scroll::-webkit-scrollbar { width: 8px; }
+.scroll::-webkit-scrollbar-track { background: transparent; }
+.scroll::-webkit-scrollbar-thumb { background: transparent; border-radius: 999px; border: 2px solid transparent; background-clip: padding-box; }
+.scroll:hover::-webkit-scrollbar-thumb { background-color: rgb(255 255 255 / .16); }
+.scroll::-webkit-scrollbar-thumb:hover { background-color: rgb(var(--ag-accent) / .55); }
+
+/* ============================================================
+   L0 艺术层：壁纸满铺 + 局部遮罩（不再整体压暗）
+   ============================================================ */
+.wp { position: fixed; inset: 0; z-index: 0; }
+.wp img { width: 100%; height: 100%; object-fit: cover; filter: brightness(var(--ag-wp-bright)) saturate(1.05); transition: opacity .6s ease; }
+.scrim {
+  position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background:
+    linear-gradient(180deg, rgb(0 0 0 / .32) 0, rgb(0 0 0 / .14) 60px, transparent 140px),
+    linear-gradient(0deg,   rgb(0 0 0 / .42) 0, transparent 240px),
+    linear-gradient(90deg,  rgb(0 0 0 / .30) 0, transparent 380px);
+}
+
+/* ============================================================
+   L2 亚克力材质（唯一一种，不嵌套）
+   ============================================================ */
+/* 注意：不要加 isolation:isolate，也不要给子层用 mix-blend-mode，
+   两者都会让 Chromium 的 backdrop-filter 失效（实测）。
+   backdrop-filter 本身已创建层叠上下文，::after 的 z-index:-1 不会跑出去。 */
+.glass {
+  position: relative;
+  background: var(--ag-glass-tint);
+  -webkit-backdrop-filter: blur(var(--ag-blur)) saturate(var(--ag-sat));
+  backdrop-filter: blur(var(--ag-blur)) saturate(var(--ag-sat));
+  border-radius: var(--ag-r-lg);
+  box-shadow: var(--ag-shadow);
+}
+/* 上亮下暗的渐变描边：模拟顶光打在亚克力边缘 */
+.glass::before {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; padding: 1px; pointer-events: none;
+  background: linear-gradient(180deg, rgb(255 255 255 / var(--edge-top, .22)), rgb(255 255 255 / .07) 38%, rgb(255 255 255 / .03));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor; mask-composite: exclude;
+  transition: background .25s ease;
+}
+/* 噪点纹理：亚克力和普通毛玻璃的区别 */
+.glass::after {
+  content: ""; position: absolute; inset: 0; border-radius: inherit; z-index: -1; pointer-events: none;
+  background-image: var(--noise-img); opacity: var(--ag-noise);
+}
+
+/* ============================================================
+   标题栏：完全透明
+   ============================================================ */
+.titlebar {
+  position: fixed; top: 0; left: 0; right: 0; height: var(--title-h); z-index: 20;
+  display: flex; align-items: center; gap: 2px; padding: 0 0 0 14px;
+  color: var(--ag-fg-2); font-size: 12.5px; -webkit-app-region: drag;
+}
+.titlebar .brand { color: var(--ag-fg-1); font-weight: 500; margin-right: 14px; letter-spacing: .01em; }
+.titlebar .menu { padding: 4px 9px; border-radius: 7px; }
+.titlebar .menu:hover { background: var(--ag-state-hover); color: var(--ag-fg-1); }
+.titlebar .win { margin-left: auto; display: flex; height: 100%; }
+.titlebar .win button { width: 46px; height: 100%; display: grid; place-items: center; color: var(--ag-fg-2); }
+.titlebar .win button:hover { background: var(--ag-state-hover); color: var(--ag-fg-1); }
+.titlebar .win button.close:hover { background: #c42b1c; color: #fff; }
+
+/* ============================================================
+   侧栏：悬浮岛
+   ============================================================ */
+.side {
+  position: fixed; z-index: 10;
+  top: var(--title-h); left: var(--ag-gap); bottom: var(--ag-gap); width: var(--side-w);
+  display: flex; flex-direction: column; padding: 10px 8px 8px;
+  transition: transform .45s cubic-bezier(.2,.8,.2,1), opacity .3s ease;
+}
+body.side-collapsed .side { transform: translateX(calc(-100% - 24px)); opacity: 0; }
+
+.side-top { display: flex; align-items: center; gap: 2px; padding: 0 4px 10px; }
+.logo { width: 26px; height: 26px; margin-right: auto; display: grid; place-items: center; }
+.logo svg { width: 22px; height: 22px; }
+.icon-btn { width: 30px; height: 30px; display: grid; place-items: center; border-radius: var(--ag-r-sm); color: var(--ag-fg-2); transition: background .15s, color .15s; }
+.icon-btn:hover { background: var(--ag-state-hover); color: var(--ag-fg-1); }
+
+.nav {
+  position: relative; display: flex; align-items: center; gap: 10px; width: 100%;
+  height: 36px; padding: 0 10px; border-radius: var(--ag-r-sm);
+  color: var(--ag-fg-2); text-align: left; transition: background .15s, color .15s;
+}
+.nav:hover { background: var(--ag-state-hover); color: var(--ag-fg-1); }
+.nav .meta { margin-left: auto; flex: none; white-space: nowrap; font-size: 11.5px; color: var(--ag-fg-3); }
+.nav kbd { margin-left: auto; font: 11px var(--font-ui); color: var(--ag-fg-3); padding: 1px 6px; border-radius: 6px; border: 1px solid var(--ag-hairline); }
+
+/* 主操作：强调色淡染 */
+.nav.primary { background: var(--ag-state-primary); color: var(--ag-fg-1); margin-bottom: 6px; }
+.nav.primary svg { color: rgb(var(--ag-accent)); }
+.nav.primary:hover { background: var(--ag-state-primary-hover); }
+
+.section-h { display: flex; align-items: center; gap: 2px; padding: 16px 6px 4px 10px; font-size: 11.5px; color: var(--ag-fg-3); letter-spacing: .04em; }
+.section-h span { margin-right: auto; }
+.section-h .icon-btn { width: 26px; height: 26px; }
+
+.proj { color: var(--ag-fg-2); height: 32px; }
+.conv { height: 34px; padding-left: 34px; font-size: 13px; }
+.conv .t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 选中：白色叠加 + 左侧强调色小竖条 */
+.conv.selected { background: var(--ag-state-selected); color: var(--ag-fg-1); }
+.conv.selected::before {
+  content: ""; position: absolute; left: 14px; top: 50%; width: 3px; height: 14px; margin-top: -7px;
+  border-radius: 3px; background: rgb(var(--ag-accent)); box-shadow: 0 0 10px rgb(var(--ag-accent) / .6);
+}
+.side-list { flex: 1; overflow-y: auto; margin: 0 -4px; padding: 0 4px; }
+.side-foot { border-top: 1px solid var(--ag-hairline); padding-top: 6px; margin-top: 6px; }
+
+/* ============================================================
+   主区
+   ============================================================ */
+.main {
+  position: fixed; z-index: 5; top: var(--title-h); right: 0; bottom: 0;
+  left: calc(var(--side-w) + var(--ag-gap) * 2);
+  transition: left .45s cubic-bezier(.2,.8,.2,1);
+}
+body.side-collapsed .main { left: 0; }
+
+.crumb {
+  position: absolute; top: 0; left: 0; right: 0; height: 44px; z-index: 6;
+  display: flex; align-items: center; gap: 8px; padding: 0 12px 0 18px; font-size: 13px; color: var(--ag-fg-2);
+}
+.crumb > span, .crumb b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.crumb > span:first-of-type { flex-shrink: 3; }
+.crumb .sep { flex: none; }
+.crumb b { font-weight: 500; color: var(--ag-fg-1); }
+.crumb .right, .pill-btn { flex: none; white-space: nowrap; }
+.crumb .sep { opacity: .45; }
+.crumb .right { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.pill-btn {
+  display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 12px; border-radius: 999px;
+  color: var(--ag-fg-1); background: rgb(255 255 255 / .06); border: 1px solid var(--ag-hairline);
+  transition: background .15s, border-color .15s;
+}
+.pill-btn:hover { background: rgb(255 255 255 / .1); border-color: rgb(255 255 255 / .14); }
+
+/* 阅读列遮罩：柔和、无边界 */
+.reading-scrim {
+  position: absolute; top: 0; bottom: 0; left: 50%; width: min(1040px, 100%); transform: translateX(-50%);
+  pointer-events: none;
+  background: linear-gradient(90deg, transparent, rgb(2 6 8 / var(--ag-scrim)) 18%, rgb(2 6 8 / var(--ag-scrim)) 82%, transparent);
+}
+
+/* ⚠ 关键约束（实测）：亚克力元素的任何祖先都不能带 mask / filter / opacity<1 / clip-path，
+   否则该祖先成为 Chromium 的 "backdrop root"，backdrop-filter 会失效（吸顶消息会透字）。
+   所以这里不用 mask 做淡出，而是让滚动区本身就在面包屑下方、任务托盘上方干净地裁切。 */
+.chat {
+  position: absolute; top: 44px; left: 0; right: 0; bottom: 158px;
+  overflow-y: auto; z-index: 1;
+  padding: 20px 24px 40px;   /* sticky 的 top 从 padding 之内算起 → 吸顶消息停在面包屑下 20px */
+}
+.col { max-width: 760px; margin: 0 auto; }
+.turn { position: relative; padding-bottom: 28px; }
+
+.umsg {
+  position: sticky; top: 0; z-index: 3;   /* 实际停在 .chat 的 padding-top 处 */
+  margin: 0 0 18px auto; width: fit-content; max-width: 88%;
+  padding: 10px 16px; border-radius: var(--ag-r-md);
+  font-size: 14px; color: var(--ag-fg-1);
+  --edge-top: .18;
+  -webkit-backdrop-filter: blur(var(--ag-blur-sticky)) saturate(var(--ag-sat));
+  backdrop-filter: blur(var(--ag-blur-sticky)) saturate(var(--ag-sat));
+  box-shadow: 0 8px 28px rgb(0 0 0 / .3);
+}
+
+.amsg { font-size: 14.5px; line-height: 1.8; color: rgb(var(--ag-fg) / .88); text-shadow: 0 1px 2px rgb(0 0 0 / .45); }
+.amsg p { margin: 0 0 12px; }
+.amsg strong { color: #fff; font-weight: 600; }
+.amsg ul { margin: 4px 0 14px; padding-left: 20px; }
+.amsg li { margin: 3px 0; }
+.amsg li::marker { color: rgb(var(--ag-accent) / .8); }
+.amsg h4 { margin: 20px 0 6px; font-size: 14.5px; font-weight: 600; color: #fff; }
+.amsg code {
+  font: 12.5px var(--font-mono); padding: 1px 6px; border-radius: 6px; text-shadow: none;
+  color: rgb(var(--ag-accent)); background: rgb(var(--ag-accent) / .12); border: 1px solid rgb(var(--ag-accent) / .18);
+}
+.amsg a { color: rgb(var(--ag-accent)); text-decoration: none; border-bottom: 1px solid rgb(var(--ag-accent) / .35); }
+
+/* L1 卡片（工具调用等）：不模糊，只用极淡填充 + 发丝线 */
+.card {
+  display: flex; align-items: center; gap: 10px; margin: 6px 0 16px; padding: 9px 12px;
+  border-radius: var(--ag-r-md); background: rgb(255 255 255 / .045); border: 1px solid var(--ag-hairline);
+  font-size: 13px; color: var(--ag-fg-2); text-shadow: none; cursor: pointer; transition: background .15s, border-color .15s;
+}
+.card:hover { background: rgb(255 255 255 / .07); border-color: rgb(255 255 255 / .12); }
+.card { white-space: nowrap; }
+.card code { font-size: 12px; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.card .status { flex: none; margin-left: auto; display: flex; align-items: center; gap: 6px; font-size: 12px; color: rgb(var(--ag-accent)); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: rgb(var(--ag-accent)); box-shadow: 0 0 0 0 rgb(var(--ag-accent) / .6); animation: pulse 1.8s infinite; }
+@keyframes pulse { 70% { box-shadow: 0 0 0 7px rgb(var(--ag-accent) / 0); } 100% { box-shadow: 0 0 0 0 rgb(var(--ag-accent) / 0); } }
+
+.actions { display: flex; gap: 2px; margin-top: 4px; }
+.actions .icon-btn { width: 28px; height: 28px; }
+.flip { transform: rotate(180deg); }
+
+/* ============================================================
+   输入区：任务托盘（独立小胶囊）+ 亚克力输入胶囊
+   ============================================================ */
+.composer-wrap {
+  position: absolute; left: 0; right: 0; bottom: 18px; z-index: 8;
+  width: min(800px, calc(100% - 40px)); margin: 0 auto;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 8px;
+}
+.tray {
+  display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 12px 0 10px;
+  border-radius: 999px; font-size: 12.5px; color: var(--ag-fg-2);
+  --edge-top: .16; box-shadow: 0 6px 20px rgb(0 0 0 / .28);
+}
+.tray:hover { color: var(--ag-fg-1); }
+.tray code { font: 12px var(--font-mono); color: var(--ag-fg-1); }
+.spin { width: 12px; height: 12px; border-radius: 50%; border: 1.6px solid rgb(var(--ag-accent) / .25); border-top-color: rgb(var(--ag-accent)); animation: spin .9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+.tray .chev { transition: transform .2s; }
+.tray.open .chev { transform: rotate(180deg); }
+.tray-list { display: none; width: 100%; padding: 6px; border-radius: var(--ag-r-md); font-size: 12.5px; }
+.tray-list.open { display: block; }
+.tray-list .row { display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: var(--ag-r-sm); color: var(--ag-fg-2); }
+.tray-list .row:hover { background: var(--ag-state-hover); }
+.tray-list code { font: 12px var(--font-mono); color: var(--ag-fg-1); }
+.tray-list .ok { width: 7px; height: 7px; border-radius: 50%; background: rgb(var(--ag-fg) / .35); }
+
+.composer {
+  width: 100%; padding: 12px 10px 8px 16px;
+  transition: box-shadow .3s ease, background .3s ease;
+}
+.composer:focus-within {
+  --edge-top: .34;
+  background: var(--ag-glass-tint-hi);
+  box-shadow:
+    var(--ag-shadow),
+    0 0 0 1px rgb(var(--ag-accent) / .28),
+    0 14px 60px -12px rgb(var(--ag-accent) / .42);
+}
+.editor { min-height: 24px; max-height: 180px; overflow-y: auto; outline: none; font-size: 14.5px; line-height: 1.6; padding: 2px 0 10px; caret-color: rgb(var(--ag-accent)); }
+.editor:empty::before { content: attr(data-ph); color: var(--ag-fg-3); pointer-events: none; }
+.composer .row { display: flex; align-items: center; gap: 4px; }
+.chip {
+  display: flex; align-items: center; gap: 4px; height: 28px; padding: 0 8px 0 10px; border-radius: 999px;
+  font-size: 12.5px; color: var(--ag-fg-2); transition: background .15s, color .15s;
+}
+.chip:hover { background: var(--ag-state-hover); color: var(--ag-fg-1); }
+.chip .spark { width: 6px; height: 6px; border-radius: 50%; background: rgb(var(--ag-accent)); }
+.send {
+  width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; margin-left: 2px;
+  background: rgb(255 255 255 / .08); color: var(--ag-fg-3);
+  transition: background .2s, color .2s, transform .15s, box-shadow .2s;
+}
+.send.ready { background: rgb(var(--ag-accent)); color: rgb(var(--ag-accent-ink)); box-shadow: 0 4px 18px rgb(var(--ag-accent) / .45); }
+.send.ready:hover { transform: translateY(-1px); }
+.send svg { stroke-width: 2.2; }
+
+/* ============================================================
+   调参面板（预览专用，不会移植）
+   ============================================================ */
+.tweak-fab { position: fixed; right: 16px; bottom: 18px; z-index: 30; width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; }
+.tweaks {
+  position: fixed; right: 16px; bottom: 68px; z-index: 30; width: 300px; max-height: calc(100vh - 120px);
+  overflow-y: auto; padding: 16px; border-radius: var(--ag-r-lg);
+  background: rgb(8 12 14 / .82); -webkit-backdrop-filter: blur(24px); backdrop-filter: blur(24px);
+  border: 1px solid rgb(255 255 255 / .1); box-shadow: 0 20px 60px rgb(0 0 0 / .5);
+  font-size: 12.5px; transition: opacity .2s, transform .2s;
+}
+.tweaks.hidden { opacity: 0; transform: translateY(8px); pointer-events: none; }
+.tweaks h3 { margin: 0 0 2px; font-size: 13.5px; font-weight: 600; }
+.tweaks .sub { color: var(--ag-fg-3); margin-bottom: 14px; }
+.tweaks .grp { margin: 14px 0 8px; font-size: 11px; letter-spacing: .06em; color: var(--ag-fg-3); }
+.seg { display: flex; padding: 3px; gap: 3px; background: rgb(255 255 255 / .05); border-radius: 10px; }
+.seg button { flex: 1; height: 28px; border-radius: 8px; color: var(--ag-fg-2); }
+.seg button.on { background: rgb(255 255 255 / .1); color: var(--ag-fg-1); }
+.swatches { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.sw { width: 26px; height: 26px; border-radius: 50%; border: 2px solid transparent; outline: 1px solid rgb(255 255 255 / .12); outline-offset: -1px; transition: transform .15s; }
+.sw:hover { transform: scale(1.1); }
+.sw.on { border-color: #fff; }
+.sw-custom { position: relative; overflow: hidden; background: conic-gradient(red, yellow, lime, cyan, blue, magenta, red); }
+.sw-custom input { position: absolute; inset: -8px; opacity: 0; cursor: pointer; }
+.accent-info { margin-top: 8px; color: var(--ag-fg-3); font: 11.5px var(--font-mono); }
+.sl { margin: 10px 0; }
+.sl label { display: flex; justify-content: space-between; color: var(--ag-fg-2); margin-bottom: 4px; }
+.sl output { color: var(--ag-fg-1); font-family: var(--font-mono); font-size: 11.5px; }
+.sl input { width: 100%; accent-color: rgb(var(--ag-accent)); }
+.tw-actions { display: flex; gap: 8px; margin-top: 14px; }
+.tw-actions button { flex: 1; height: 32px; border-radius: 10px; background: rgb(255 255 255 / .07); border: 1px solid var(--ag-hairline); }
+.tw-actions button:hover { background: rgb(255 255 255 / .12); }
+.tw-actions button.pri { background: rgb(var(--ag-accent)); color: rgb(var(--ag-accent-ink)); border-color: transparent; font-weight: 600; }
+.hint { margin-top: 12px; color: var(--ag-fg-3); line-height: 1.6; }
+
+.drop { position: fixed; inset: 0; z-index: 50; display: none; place-items: center; background: rgb(0 0 0 / .45); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); font-size: 16px; }
+.drop.on { display: grid; }
+.drop div { padding: 28px 40px; border-radius: 22px; border: 1.5px dashed rgb(var(--ag-accent)); color: var(--ag-fg-1); }
+
+.toast { position: fixed; left: 50%; top: 56px; z-index: 60; transform: translate(-50%, -10px); opacity: 0; padding: 8px 16px; border-radius: 999px; font-size: 12.5px; pointer-events: none; transition: opacity .2s, transform .2s; }
+.toast.on { opacity: 1; transform: translate(-50%, 0); }
+
+@media (max-width: 900px) {
+  :root { --side-w: 220px; }
+  .tweaks { width: 260px; }
+}
+@media (max-width: 720px) {
+  .side { transform: translateX(calc(-100% - 24px)); opacity: 0; }
+  .main { left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+  <symbol id="i-history" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 2.6-6.4L3 8"/><path d="M3 3v5h5"/><path d="M12 7.5V12l3 2"/></symbol>
+  <symbol id="i-cal" viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15.5" rx="3"/><path d="M3.5 10h17M8 3v4M16 3v4"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h3.8l2 2h7.2a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/></symbol>
+  <symbol id="i-folder-plus" viewBox="0 0 24 24"><path d="M3.5 7.5a2 2 0 0 1 2-2h3.8l2 2h7.2a2 2 0 0 1 2 2v7.5a2 2 0 0 1-2 2h-13a2 2 0 0 1-2-2z"/><path d="M12 10.5v5M9.5 13h5"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 7h16M7 12h10M10 17h4"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><path d="M20 7h-9M14 17H5"/><circle cx="17" cy="17" r="3"/><circle cx="7" cy="7" r="3"/></symbol>
+  <symbol id="i-sidebar" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M9.5 4.5v15"/></symbol>
+  <symbol id="i-panel" viewBox="0 0 24 24"><rect x="3.5" y="4.5" width="17" height="15" rx="3"/><path d="M14.5 4.5v15"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><path d="M14.5 18l-6-6 6-6"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><path d="M9.5 18l6-6-6-6"/></symbol>
+  <symbol id="i-chev" viewBox="0 0 24 24"><path d="M6 15l6-6 6 6"/></symbol>
+  <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M5.5 15H5a1.5 1.5 0 0 1-1.5-1.5V5A1.5 1.5 0 0 1 5 3.5h8.5A1.5 1.5 0 0 1 15 5v.5"/></symbol>
+  <symbol id="i-thumb" viewBox="0 0 24 24"><path d="M7 10v11"/><path d="M15 5.9 14 10h5.8a2 2 0 0 1 1.9 2.6l-2.3 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.8a2 2 0 0 0 1.8-1.1L12 2a3.1 3.1 0 0 1 3 3.9Z"/></symbol>
+  <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5.5 11a6.5 6.5 0 0 0 13 0M12 17.5V21"/></symbol>
+  <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 19V5M5.5 11.5 12 5l6.5 6.5"/></symbol>
+  <symbol id="i-more" viewBox="0 0 24 24"><circle cx="12" cy="5.5" r=".9"/><circle cx="12" cy="12" r=".9"/><circle cx="12" cy="18.5" r=".9"/></symbol>
+  <symbol id="i-term" viewBox="0 0 24 24"><path d="M5 16.5l5-4.5-5-4.5M12.5 18h6.5"/></symbol>
+  <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+  <symbol id="i-min" viewBox="0 0 24 24"><path d="M6 12h12"/></symbol>
+  <symbol id="i-max" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1.5"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6.5 6.5l11 11M17.5 6.5l-11 11"/></symbol>
+</svg>
+
+<!-- L0 -->
+<div class="wp"><img id="wpImg" alt=""></div>
+<div class="scrim"></div>
+
+<!-- 标题栏 -->
+<header class="titlebar">
+  <span class="brand">Antigravity</span>
+  <span class="menu">文件</span><span class="menu">视图</span><span class="menu">窗口</span>
+  <div class="win">
+    <button aria-label="最小化"><svg class="i"><use href="#i-min"/></svg></button>
+    <button aria-label="最大化"><svg class="i" style="width:13px;height:13px"><use href="#i-max"/></svg></button>
+    <button class="close" aria-label="关闭"><svg class="i"><use href="#i-x"/></svg></button>
+  </div>
+</header>
+
+<!-- L2 侧栏悬浮岛 -->
+<aside class="side glass">
+  <div class="side-top">
+    <div class="logo">
+      <svg viewBox="0 0 24 24" fill="none">
+        <defs><linearGradient id="lg" x1="0" y1="1" x2="1" y2="0">
+          <stop offset="0" stop-color="rgb(var(--ag-accent))"/><stop offset="1" stop-color="#fff"/>
+        </linearGradient></defs>
+        <path d="M3.5 20.5 12 3.5l8.5 17" stroke="url(#lg)" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"/>
+        <path d="M8 20.5c1.2-3 2.5-4.2 4-4.2s2.8 1.2 4 4.2" stroke="url(#lg)" stroke-width="2.2" stroke-linecap="round"/>
+      </svg>
+    </div>
+    <button class="icon-btn" id="toggleSide" title="收起侧栏"><svg class="i"><use href="#i-sidebar"/></svg></button>
+    <button class="icon-btn"><svg class="i"><use href="#i-left"/></svg></button>
+    <button class="icon-btn"><svg class="i"><use href="#i-right"/></svg></button>
+  </div>
+
+  <button class="nav primary"><svg class="i"><use href="#i-plus"/></svg>新建对话<kbd>Ctrl N</kbd></button>
+  <button class="nav"><svg class="i"><use href="#i-history"/></svg>对话历史</button>
+  <button class="nav"><svg class="i"><use href="#i-cal"/></svg>计划任务</button>
+
+  <div class="section-h"><span>项目列表</span>
+    <button class="icon-btn"><svg class="i"><use href="#i-filter"/></svg></button>
+    <button class="icon-btn"><svg class="i"><use href="#i-folder-plus"/></svg></button>
+  </div>
+  <div class="side-list scroll" id="convList">
+    <button class="nav proj"><svg class="i"><use href="#i-folder"/></svg>Gemini harness</button>
+    <button class="nav conv selected"><span class="t">Changing To Chinese Interface</span><span class="meta">3 分钟前</span></button>
+    <button class="nav conv"><span class="t">Wallpaper Hub 60fps 管线</span><span class="meta">1 小时前</span></button>
+    <button class="nav conv"><span class="t">scene.pkg 材质解包</span><span class="meta">昨天</span></button>
+    <button class="nav proj"><svg class="i"><use href="#i-folder"/></svg>hopeful-hertz</button>
+    <button class="nav conv"><span class="t">Trajectory ID: 519e3c7…</span><span class="meta">5 天前</span></button>
+  </div>
+  <div class="side-foot">
+    <button class="nav"><svg class="i"><use href="#i-settings"/></svg>设置</button>
+  </div>
+</aside>
+
+<!-- 主区 -->
+<main class="main">
+  <div class="reading-scrim"></div>
+
+  <div class="crumb">
+    <button class="icon-btn" id="showSide" title="展开侧栏" style="display:none"><svg class="i"><use href="#i-sidebar"/></svg></button>
+    <span>Gemini harness</span><span class="sep">/</span><b>Changing To Chinese Interface</b>
+    <div class="right">
+      <button class="icon-btn"><svg class="i"><use href="#i-more"/></svg></button>
+      <button class="pill-btn"><svg class="i" style="width:14px;height:14px;color:rgb(var(--ag-accent))"><use href="#i-term"/></svg>安装 IDE</button>
+      <button class="icon-btn"><svg class="i"><use href="#i-panel"/></svg></button>
+    </div>
+  </div>
+
+  <div class="chat scroll" id="chat">
+    <div class="col" id="col">
+
+      <section class="turn">
+        <div class="umsg glass">把露西这张换成 2K 60 帧的动态版本</div>
+        <div class="amsg">
+          <p>好的，我先从 <code>scene.pkg</code> 里把原画材质解出来，再生成 60 帧的循环动画。</p>
+          <div class="card"><svg class="i"><use href="#i-term"/></svg>已运行 <code>python prepare_hd_wallpaper.py 2880040676</code><span class="status" style="color:var(--ag-fg-3)">完成 · 4.2s</span></div>
+          <p>材质提取完成，原画尺寸 <strong>2667×1500</strong>，接下来进行重采样。</p>
+        </div>
+      </section>
+
+      <section class="turn">
+        <div class="umsg glass">？？你怎么又关闭了</div>
+        <div class="amsg">
+          <p>抱歉！刚才重启预览进程时误关了壁纸服务，已经重新拉起，并暂时退回到了静态图。</p>
+          <div class="card"><div class="dot"></div>正在运行 <code>node wallpaper_hub_server.js</code><span class="status">运行中</span></div>
+
+          <h4>1. 问题原因</h4>
+          <p>服务重启脚本没有等待端口释放，导致新进程启动失败，渲染层回退到了缓存的静态帧。</p>
+
+          <h4>2. 现在的效果（已就绪并加载）</h4>
+          <ul>
+            <li><strong>真正的 2K（2560×1440）原画级超清：</strong>从 <code>scene.pkg</code> 核心材质包中完整提取 <strong>2667×1500</strong> 无损母画，经 Lanczos 重构为标准 16:9。</li>
+            <li><strong>60 帧丝滑动态呼吸与烟雾：</strong>生成 120 帧、60.0000 帧率的 <code>preview_animated.webp</code>：
+              <ul>
+                <li>香烟缕缕白烟：从指尖烟头处自然升腾、螺旋卷曲消散；</li>
+                <li>烟头炭火呼吸：燃烧点有微弱逼真的暗红/橙光呼吸脉冲；</li>
+                <li>赛博微光粒子：窗台光束中带有浮沉光斑；</li>
+                <li>体积控制在 <strong>2.45 MB</strong>，零显卡负担。</li>
+              </ul>
+            </li>
+          </ul>
+
+          <h4>3. 全局"新壁纸自动 2K 60 帧"处理管线已打通</h4>
+          <ul>
+            <li>通用脚本 <code>prepare_hd_wallpaper.py</code> 已集成进注入管线：
+              <ul>
+                <li><strong>视频壁纸（MP4/WebM）：</strong>硬件级解码抽取 60 帧并升采样至 2K；</li>
+                <li><strong>场景壁纸（scene.pkg）：</strong>自动提取包内最大分辨率原图，杜绝 915×915 缩略图充数。</li>
+              </ul>
+            </li>
+            <li>之前滑块小圆球无法左右拖拽的问题已全部修复。</li>
+            <li><strong>壁纸选择库服务</strong>已在后台启动：<a href="#">http://localhost:3210</a></li>
+          </ul>
+          <p>现在重新打开 Antigravity，露西的 <strong>2K 60 帧动态壁纸</strong>已经完全生效，看看清晰度和烟雾动态是否达到你的预期！</p>
+          <div class="actions">
+            <button class="icon-btn" title="复制"><svg class="i"><use href="#i-copy"/></svg></button>
+            <button class="icon-btn" title="赞"><svg class="i"><use href="#i-thumb"/></svg></button>
+            <button class="icon-btn" title="踩"><svg class="i flip"><use href="#i-thumb"/></svg></button>
+          </div>
+        </div>
+      </section>
+
+    </div>
+  </div>
+
+  <!-- 输入区 -->
+  <div class="composer-wrap">
+    <div class="tray-list glass" id="trayList">
+      <div class="row"><div class="spin"></div><code>node wallpaper_hub_server.js</code><span style="margin-left:auto">运行中 · 12 分钟</span></div>
+      <div class="row"><div class="ok"></div><code>python prepare_hd_wallpaper.py</code><span style="margin-left:auto">已完成</span></div>
+    </div>
+    <button class="tray glass" id="tray"><div class="spin"></div>1 个任务运行中<code>node wallpaper_hub_server.js</code><svg class="i chev" style="width:14px;height:14px"><use href="#i-chev"/></svg></button>
+    <div class="composer glass" id="composer">
+      <div class="editor scroll" id="editor" contenteditable="true" data-ph="提问任何问题，使用 @ 提及，/ 执行操作"></div>
+      <div class="row">
+        <button class="icon-btn" title="添加"><svg class="i"><use href="#i-plus"/></svg></button>
+        <button class="chip"><span class="spark"></span>Gemini 3.8 Flash · High<svg class="i" style="width:13px;height:13px"><use href="#i-chev"/></svg></button>
+        <span style="flex:1"></span>
+        <button class="icon-btn" title="语音"><svg class="i"><use href="#i-mic"/></svg></button>
+        <button class="send" id="send" title="发送"><svg class="i"><use href="#i-send"/></svg></button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<!-- 调参面板 -->
+<button class="tweak-fab glass" id="fab" title="调参面板 (T)"><svg class="i"><use href="#i-sliders"/></svg></button>
+<div class="tweaks scroll" id="tweaks">
+  <h3>调参面板</h3>
+  <div class="sub">实时预览 · 按 T 开关 · 可把图片拖进窗口换壁纸</div>
+
+  <div class="grp">壁纸</div>
+  <div class="seg" id="modeSeg">
+    <button data-m="static">静态 2K</button>
+    <button data-m="animated">动态 60 帧</button>
+  </div>
+
+  <div class="grp">强调色（从壁纸自动提取）</div>
+  <div class="swatches" id="swatches"></div>
+  <div class="accent-info" id="accentInfo">正在分析壁纸…</div>
+
+  <div class="grp">材质与布局</div>
+  <div id="sliders"></div>
+
+  <div class="tw-actions">
+    <button id="reset">恢复默认</button>
+    <button class="pri" id="copy">复制 CSS Token</button>
+  </div>
+  <div class="hint">悬停侧栏条目看"悬停"态，点击切换"选中"态；点击输入框看"聚焦"光晕，输入文字后发送键会亮起。</div>
+</div>
+
+<div class="drop" id="drop"><div>松开以更换壁纸，强调色会自动重新提取</div></div>
+<div class="toast glass" id="toast"></div>
+
+<script>
+(() => {
+  const $ = s => document.querySelector(s);
+  const root = document.documentElement;
+
+  const WP = { static: '../extracted_lucy/preview_hd.jpg', animated: '../extracted_lucy/preview_animated.webp' };
+  let custom = null; // 拖入的自定义壁纸 URL
+
+  const DEFAULTS = { glassA: .32, blur: 0, sat: 170, noise: .015, radius: 22, gap: 13, scrim: .34, bright: .91, mode: 'static', accentIdx: 0, accentCustom: null, tweaksOpen: true };
+  const SLIDERS = [
+    { k: 'glassA', label: '玻璃不透明度', min: .1, max: .8, step: .01, fmt: v => Math.round(v * 100) + '%' },
+    { k: 'blur', label: '模糊半径', min: 0, max: 60, step: 1, fmt: v => v + 'px' },
+    { k: 'sat', label: '透色饱和度', min: 100, max: 240, step: 5, fmt: v => v + '%' },
+    { k: 'noise', label: '亚克力噪点', min: 0, max: .2, step: .005, fmt: v => (v * 100).toFixed(1) + '%' },
+    { k: 'radius', label: '圆角（大）', min: 6, max: 32, step: 1, fmt: v => v + 'px' },
+    { k: 'gap', label: '悬浮间距', min: 0, max: 24, step: 1, fmt: v => v + 'px' },
+    { k: 'scrim', label: '阅读列遮罩', min: 0, max: .7, step: .01, fmt: v => Math.round(v * 100) + '%' },
+    { k: 'bright', label: '壁纸亮度', min: .5, max: 1.1, step: .01, fmt: v => Math.round(v * 100) + '%' },
+  ];
+
+  const KEY = 'ag-acrylic-preview-v3';
+  let S = { ...DEFAULTS };
+  try { Object.assign(S, JSON.parse(localStorage.getItem(KEY) || '{}')); } catch (e) {}
+  const save = () => { try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) {} };
+
+  // ---------- 颜色工具 ----------
+  const rgb2hsl = (r, g, b) => {
+    r /= 255; g /= 255; b /= 255;
+    const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+    if (mx === mn) return [0, 0, l];
+    const d = mx - mn, s = l > .5 ? d / (2 - mx - mn) : d / (mx + mn);
+    const h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+    return [h * 60, s, l];
+  };
+  const hsl2rgb = (h, s, l) => {
+    const k = n => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+    const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+    return [f(0), f(8), f(4)].map(v => Math.round(v * 255));
+  };
+  const hex = c => '#' + c.map(v => v.toString(16).padStart(2, '0')).join('');
+  const hex2rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const lum = ([r, g, b]) => { const f = v => (v /= 255) <= .03928 ? v / 12.92 : ((v + .055) / 1.055) ** 2.4; return .2126 * f(r) + .7152 * f(g) + .0722 * f(b); };
+
+  // 把原始色调成适合深色 UI 的强调色：饱和度夹在 0.5~0.85，明度固定在 0.66 左右
+  const tune = ([r, g, b]) => { const [h, s] = rgb2hsl(r, g, b); return hsl2rgb(h, Math.min(.85, Math.max(.5, s)), .66); };
+
+  // ---------- 壁纸取色 ----------
+  // 36 个色相桶（每桶 10°），按"饱和度² × 中间调权重"累加，取前 5 个彼此相距 ≥ 28° 的色相
+  function extract(img) {
+    const w = 120, h = Math.max(1, Math.round(120 * img.naturalHeight / img.naturalWidth));
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    const ctx = c.getContext('2d', { willReadFrequently: true });
+    ctx.drawImage(img, 0, 0, w, h);
+    const d = ctx.getImageData(0, 0, w, h).data; // 若被跨域污染会抛错
+    const bins = Array.from({ length: 36 }, () => ({ w: 0, r: 0, g: 0, b: 0 }));
+    for (let i = 0; i < d.length; i += 4) {
+      const [hh, s, l] = rgb2hsl(d[i], d[i + 1], d[i + 2]);
+      if (s < .18 || l < .1 || l > .93) continue;
+      const wt = s * s * (1 - Math.abs(l - .5) * 1.3);
+      if (wt <= 0) continue;
+      const bn = bins[Math.floor(hh / 10) % 36];
+      bn.w += wt; bn.r += d[i] * wt; bn.g += d[i + 1] * wt; bn.b += d[i + 2] * wt;
+    }
+    const ranked = bins.map((b, i) => ({ ...b, hue: i * 10 + 5 })).filter(b => b.w > 0).sort((a, b) => b.w - a.w);
+    const picks = [];
+    for (const b of ranked) {
+      if (picks.length >= 5) break;
+      if (picks.some(p => { const dh = Math.abs(p.hue - b.hue); return Math.min(dh, 360 - dh) < 28; })) continue;
+      if (b.w < ranked[0].w * .04) break;
+      picks.push(b);
+    }
+    return picks.map(b => tune([b.r / b.w, b.g / b.w, b.b / b.w].map(Math.round)));
+  }
+
+  let cands = [];
+  function setAccent(c) {
+    const [h] = rgb2hsl(...c);
+    root.style.setProperty('--ag-accent', c.join(' '));
+    root.style.setProperty('--ag-tint-h', Math.round(h));
+    root.style.setProperty('--ag-accent-ink', lum(c) > .35 ? '6 14 16' : '255 255 255');
+    $('#accentInfo').textContent = `当前 ${hex(c)}  ·  色相 ${Math.round(h)}°  ·  ${S.accentCustom ? '手动' : S.accentIdx === 0 ? '自动（主色）' : '候选 ' + (S.accentIdx + 1)}`;
+  }
+  function currentAccent() {
+    if (S.accentCustom) return tune(hex2rgb(S.accentCustom));
+    return cands[S.accentIdx] || cands[0] || [94, 214, 200];
+  }
+  function renderSwatches() {
+    const box = $('#swatches'); box.innerHTML = '';
+    cands.forEach((c, i) => {
+      const b = document.createElement('button');
+      b.className = 'sw' + (!S.accentCustom && S.accentIdx === i ? ' on' : '');
+      b.style.background = hex(c);
+      b.title = (i === 0 ? '自动（主色）' : '候选 ' + (i + 1)) + ' ' + hex(c);
+      b.onclick = () => { S.accentIdx = i; S.accentCustom = null; save(); renderSwatches(); setAccent(currentAccent()); };
+      box.appendChild(b);
+    });
+    const cw = document.createElement('label');
+    cw.className = 'sw sw-custom' + (S.accentCustom ? ' on' : ''); cw.title = '手动指定';
+    const inp = document.createElement('input'); inp.type = 'color'; inp.value = S.accentCustom || hex(currentAccent());
+    inp.oninput = () => { S.accentCustom = inp.value; save(); setAccent(currentAccent()); };
+    inp.onchange = () => renderSwatches();
+    cw.appendChild(inp); box.appendChild(cw);
+  }
+  function analyze(src) {
+    const img = new Image();
+    img.onload = () => {
+      try { cands = extract(img); if (!cands.length) cands = [[140, 170, 255]]; }
+      catch (e) { cands = [[94, 214, 200]]; toast('无法读取像素：请用 http:// 方式打开本页'); }
+      if (S.accentIdx >= cands.length) S.accentIdx = 0;
+      renderSwatches(); setAccent(currentAccent());
+    };
+    img.onerror = () => toast('壁纸加载失败：' + src);
+    img.src = src;
+  }
+
+  // ---------- 壁纸 ----------
+  function setWallpaper() {
+    const src = custom || WP[S.mode];
+    const el = $('#wpImg');
+    if (el.getAttribute('src') !== src) el.src = src;
+    document.querySelectorAll('#modeSeg button').forEach(b => b.classList.toggle('on', b.dataset.m === S.mode));
+  }
+  $('#modeSeg').addEventListener('click', e => {
+    const m = e.target.closest('button')?.dataset.m; if (!m) return;
+    S.mode = m; custom = null; save(); setWallpaper(); analyze(WP.static);
+  });
+
+  // ---------- 滑块 ----------
+  const slBox = $('#sliders');
+  SLIDERS.forEach(o => {
+    const wrap = document.createElement('div'); wrap.className = 'sl';
+    wrap.innerHTML = `<label>${o.label}<output></output></label><input type="range" min="${o.min}" max="${o.max}" step="${o.step}">`;
+    const inp = wrap.querySelector('input'), out = wrap.querySelector('output');
+    inp.value = S[o.k]; out.textContent = o.fmt(+S[o.k]);
+    inp.oninput = () => { S[o.k] = +inp.value; out.textContent = o.fmt(S[o.k]); applyVars(); save(); };
+    o.inp = inp; o.out = out;
+    slBox.appendChild(wrap);
+  });
+  function applyVars() {
+    const p = (k, v) => root.style.setProperty(k, v);
+    p('--ag-glass-a', S.glassA);
+    p('--ag-blur', S.blur + 'px');
+    p('--ag-sat', S.sat + '%');
+    p('--ag-noise', S.noise);
+    p('--ag-r-lg', S.radius + 'px');
+    p('--ag-r-md', Math.round(S.radius * .64) + 'px');
+    p('--ag-r-sm', Math.round(S.radius * .45) + 'px');
+    p('--ag-gap', S.gap + 'px');
+    p('--ag-scrim', S.scrim);
+    p('--ag-wp-bright', S.bright);
+  }
+
+  $('#reset').onclick = () => {
+    const keepOpen = S.tweaksOpen; S = { ...DEFAULTS, tweaksOpen: keepOpen }; custom = null; save();
+    SLIDERS.forEach(o => { o.inp.value = S[o.k]; o.out.textContent = o.fmt(S[o.k]); });
+    applyVars(); setWallpaper(); analyze(WP.static);
+  };
+
+  $('#copy').onclick = async () => {
+    const c = currentAccent(), cs = getComputedStyle(root);
+    const css = `:root {
+  /* 由壁纸自动提取 —— 运行时会被 prepare_hd_wallpaper.py 的结果覆盖 */
+  --ag-accent: ${c.join(' ')};            /* ${hex(c)} */
+  --ag-accent-ink: ${cs.getPropertyValue('--ag-accent-ink').trim()};
+  --ag-tint-h: ${cs.getPropertyValue('--ag-tint-h').trim()};
+
+  --ag-glass-a: ${S.glassA};
+  --ag-blur: ${S.blur}px;
+  --ag-blur-sticky: 12px;
+  --ag-sat: ${S.sat}%;
+  --ag-noise: ${S.noise};
+  --ag-r-lg: ${S.radius}px;
+  --ag-r-md: ${Math.round(S.radius * .64)}px;
+  --ag-r-sm: ${Math.round(S.radius * .45)}px;
+  --ag-gap: ${S.gap}px;
+  --ag-scrim: ${S.scrim};
+  --ag-wp-bright: ${S.bright};
+}`;
+    try { await navigator.clipboard.writeText(css); toast('CSS Token 已复制，直接粘贴给我就行'); }
+    catch (e) { console.log(css); toast('复制失败，已输出到控制台'); }
+  };
+
+  // ---------- 面板开关 ----------
+  const setTweaks = open => { S.tweaksOpen = open; save(); $('#tweaks').classList.toggle('hidden', !open); };
+  $('#fab').onclick = () => setTweaks(!S.tweaksOpen);
+  document.addEventListener('keydown', e => {
+    if ((e.key === 't' || e.key === 'T') && !e.target.closest('[contenteditable],input')) setTweaks(!S.tweaksOpen);
+  });
+
+  // ---------- 侧栏交互 ----------
+  $('#convList').addEventListener('click', e => {
+    const b = e.target.closest('.conv'); if (!b) return;
+    document.querySelectorAll('.conv').forEach(x => x.classList.toggle('selected', x === b));
+    document.querySelector('.crumb b').textContent = b.querySelector('.t').textContent;
+  });
+  const setSide = collapsed => { document.body.classList.toggle('side-collapsed', collapsed); $('#showSide').style.display = collapsed ? 'grid' : 'none'; };
+  $('#toggleSide').onclick = () => setSide(true);
+  $('#showSide').onclick = () => setSide(false);
+
+  // ---------- 输入框 ----------
+  const ed = $('#editor'), send = $('#send');
+  const syncSend = () => { if (!ed.innerText.trim()) ed.innerHTML = ''; send.classList.toggle('ready', !!ed.innerText.trim()); };
+  ed.addEventListener('input', syncSend);
+  const doSend = () => {
+    const t = ed.innerText.trim(); if (!t) return;
+    const sec = document.createElement('section'); sec.className = 'turn';
+    const u = document.createElement('div'); u.className = 'umsg glass'; u.textContent = t;
+    const a = document.createElement('div'); a.className = 'amsg'; a.innerHTML = '<p style="color:var(--ag-fg-3)">（这是预览稿，不会真的发送。注意看：你的消息滚动时会吸附在顶部，下面的文字被亚克力模糊，不再透字重叠。）</p>';
+    sec.append(u, a); $('#col').appendChild(sec);
+    ed.innerHTML = ''; syncSend();
+    const chat = $('#chat'); chat.scrollTo({ top: chat.scrollHeight, behavior: 'smooth' });
+  };
+  send.onclick = doSend;
+  ed.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); doSend(); } });
+
+  // ---------- 任务托盘 ----------
+  $('#tray').onclick = () => { $('#tray').classList.toggle('open'); $('#trayList').classList.toggle('open'); };
+
+  // ---------- 拖入换壁纸 ----------
+  let dragDepth = 0;
+  window.addEventListener('dragenter', e => { e.preventDefault(); dragDepth++; $('#drop').classList.add('on'); });
+  window.addEventListener('dragleave', () => { if (--dragDepth <= 0) { dragDepth = 0; $('#drop').classList.remove('on'); } });
+  window.addEventListener('dragover', e => e.preventDefault());
+  window.addEventListener('drop', e => {
+    e.preventDefault(); dragDepth = 0; $('#drop').classList.remove('on');
+    const f = [...(e.dataTransfer?.files || [])].find(f => f.type.startsWith('image/'));
+    if (!f) return toast('请拖入图片文件（jpg / png / webp / gif）');
+    custom = URL.createObjectURL(f); S.accentIdx = 0; S.accentCustom = null;
+    setWallpaper(); analyze(custom); toast('已换壁纸：' + f.name);
+  });
+
+  // ---------- toast ----------
+  let tt;
+  function toast(msg) { const t = $('#toast'); t.textContent = msg; t.classList.add('on'); clearTimeout(tt); tt = setTimeout(() => t.classList.remove('on'), 2600); }
+
+  // ---------- 启动 ----------
+  applyVars(); setWallpaper(); setTweaks(S.tweaksOpen); analyze(WP.static);
+})();
+</script>
+</body>
+</html>

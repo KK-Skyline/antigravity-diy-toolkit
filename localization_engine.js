@@ -6,6 +6,10 @@ const child_process = require('child_process');
 
 // --tw 參數：使用繁體中文字典 (dicts_tw/)，否則使用預設簡體字典 (dicts/)
 const USE_TW = process.argv.includes('--tw');
+// --theme-blue / --dark-blue 參數：啟用 Antigravity 官方質感科技藍黑皮膚 (Obsidian Blue)
+const USE_DARK_BLUE = process.argv.includes('--theme-blue') || process.argv.includes('--dark-blue') || process.argv.includes('--deepseek');
+// --wallpaper 參數：聯動 Wallpaper Engine 實時桌布換膚
+const USE_WALLPAPER = process.argv.includes('--wallpaper') || process.argv.includes('--we');
 const DICTS_FOLDER = USE_TW ? 'dicts_tw' : 'dicts';
 const BRAND_TITLE_ALIASES = {
     english: 'english',
@@ -123,6 +127,57 @@ if (USE_TW) {
 const SIGNATURE_START = "/* --- ANTIGRAVITY CHINESE LOCALIZATION START --- */";
 const SIGNATURE_END = "/* --- ANTIGRAVITY CHINESE LOCALIZATION END --- */";
 
+// 注入到 Antigravity 主进程的视频壁纸服务 (dist/agWallpaperVideo.js)
+// - 只监听 127.0.0.1、随机端口，只提供 preload 指定的那一个 .mp4 / .webm 文件
+// - 支持 Range（循环 / 拖动）与 CORS（渲染进程画布可读像素，用于取色和亮度自适应）
+const WALLPAPER_VIDEO_MAIN_MODULE = [
+    "'use strict';",
+    "// Antigravity 视频壁纸服务（由 antigravity2-cn/localization_engine.js 注入）",
+    "const { ipcMain, app } = require('electron');",
+    "const http = require('http');",
+    "const fs = require('fs');",
+    "let current = { path: '', mime: 'video/mp4' };",
+    "let server = null;",
+    "let urlPromise = null;",
+    "function handle(req, res) {",
+    "    let size;",
+    "    try { size = fs.statSync(current.path).size; } catch (e) { res.writeHead(404); res.end(); return; }",
+    "    const headers = { 'Content-Type': current.mime, 'Accept-Ranges': 'bytes', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' };",
+    "    const m = /bytes=(\\d*)-(\\d*)/.exec(req.headers.range || '');",
+    "    let start = 0, end = size - 1, status = 200;",
+    "    if (m) {",
+    "        start = m[1] ? +m[1] : 0;",
+    "        end = m[2] ? Math.min(+m[2], size - 1) : size - 1;",
+    "        if (start >= size || start > end) { res.writeHead(416, { 'Content-Range': 'bytes */' + size }); res.end(); return; }",
+    "        status = 206;",
+    "        headers['Content-Range'] = 'bytes ' + start + '-' + end + '/' + size;",
+    "    }",
+    "    headers['Content-Length'] = end - start + 1;",
+    "    res.writeHead(status, headers);",
+    "    const stream = fs.createReadStream(current.path, { start: start, end: end });",
+    "    res.on('close', () => stream.destroy());",
+    "    stream.pipe(res);",
+    "}",
+    "function start() {",
+    "    if (urlPromise) return urlPromise;",
+    "    urlPromise = new Promise((resolve, reject) => {",
+    "        server = http.createServer(handle);",
+    "        server.on('error', e => { urlPromise = null; reject(e); });",
+    "        server.listen(0, '127.0.0.1', () => resolve('http://127.0.0.1:' + server.address().port + '/wallpaper'));",
+    "    });",
+    "    return urlPromise;",
+    "}",
+    "ipcMain.handle('antigravity:wallpaper-video-url', async (_event, filePath, mime) => {",
+    "    if (typeof filePath !== 'string' || !/\\.(mp4|webm)$/i.test(filePath) || !fs.existsSync(filePath)) {",
+    "        throw new Error('invalid wallpaper video: ' + filePath);",
+    "    }",
+    "    current = { path: filePath, mime: mime === 'video/webm' ? 'video/webm' : 'video/mp4' };",
+    "    return start();",
+    "});",
+    "app.on('will-quit', () => { try { if (server) server.close(); } catch (e) {} });",
+    ""
+].join('\n');
+
 function normalizeText(text) {
     if (!text) return "";
     return text.replace(/\s+/g, ' ')
@@ -163,12 +218,99 @@ function loadDictionary() {
     return totalMap;
 }
 
+// 场景壁纸里由 Wallpaper Engine 实时渲染的粒子特效（静态原画里没有），运行时用画布重绘。
+// 目前识别"下雨"：场景包里有 rain 粒子，且壁纸设置里的下雨开关没有关掉。
+function detectSceneEffects(dir) {
+    const effects = {};
+    try {
+        const pkg = path.join(dir, "scene.pkg");
+        if (!fs.existsSync(pkg)) return effects;
+        // scene.pkg 开头是明文文件名目录，读前 256KB 就够
+        const fd = fs.openSync(pkg, "r");
+        const buf = Buffer.alloc(Math.min(fs.statSync(pkg).size, 256 * 1024));
+        fs.readSync(fd, buf, 0, buf.length, 0);
+        fs.closeSync(fd);
+        const names = buf.toString("latin1").toLowerCase();
+        let rainOn = /particles\/[^\x00]*rain/.test(names);
+        try {
+            const proj = JSON.parse(fs.readFileSync(path.join(dir, "project.json"), "utf8"));
+            const prop = proj.general && proj.general.properties && proj.general.properties.rain;
+            if (prop && Array.isArray(prop.options)) {
+                const opt = prop.options.find(o => String(o.value) === String(prop.value));
+                if (opt && /off|关/i.test(String(opt.label))) rainOn = false;
+            } else if (prop && prop.type === "bool" && prop.value === false) {
+                rainOn = false;
+            }
+        } catch (e) {}
+        if (rainOn) effects.rain = { intensity: /down_?pour|heavy|storm/.test(names) ? 1 : 0.6 };
+    } catch (e) {}
+    return effects;
+}
+
 function generateJs() {
     const fullDict = loadDictionary();
     const longEntries = Object.entries(fullDict).sort((a, b) => b[0].length - a[0].length);
     
     const dictJson = JSON.stringify(fullDict, null, 4);
     const entriesJson = JSON.stringify(longEntries);
+
+    let bakedWallpaper = null;
+    if (USE_WALLPAPER) {
+        try {
+            let userCfg = {
+                enabled: true,
+                workshopId: "3284620554",
+                monitor: "Monitor0",
+                opacity: 0.68,
+                blur: 0,
+                brightness: 105,
+                contrast: 110,
+                saturate: 110,
+                darken: 18,
+                flipHorizontal: false,
+                caretColor: "#4f8cff"
+            };
+            const cfgFile = path.join(__dirname, 'wallpaper_config.json');
+            if (fs.existsSync(cfgFile)) {
+                try { Object.assign(userCfg, JSON.parse(fs.readFileSync(cfgFile, 'utf8'))); } catch(e) {}
+            }
+            const weReader = require('./wallpaper_engine_reader');
+            let wp = weReader.getActiveWallpaper(userCfg.monitor, userCfg.workshopId);
+            // 场景 / 图片壁纸：运行 2K 60FPS 超清预设管线。
+            // 视频壁纸不再转成动图（会截断时长、放大出颗粒、CPU 解码掉帧），运行时直接播放原视频。
+            if (!(wp && wp.type === 'video')) {
+                try {
+                    const prepScript = path.join(__dirname, 'prepare_hd_wallpaper.py');
+                    if (fs.existsSync(prepScript) && userCfg.workshopId) {
+                        child_process.execSync(`python "${prepScript}" ${userCfg.workshopId}`, { stdio: 'ignore', windowsHide: true });
+                        wp = weReader.getActiveWallpaper(userCfg.monitor, userCfg.workshopId);
+                    }
+                } catch (e) {}
+            }
+            const hasPoster = wp && wp.mediaPath && fs.existsSync(wp.mediaPath);
+            if (hasPoster || (wp && wp.videoPath)) {
+                const buf = hasPoster ? fs.readFileSync(wp.mediaPath) : null;
+                bakedWallpaper = {
+                    title: wp.title || 'Wallpaper Engine',
+                    type: wp.type || 'image',
+                    mediaType: wp.mediaType || 'image/jpeg',
+                    dataUrl: buf ? `data:${wp.mediaType || 'image/jpeg'};base64,${buf.toString('base64')}` : '',
+                    videoPath: wp.videoPath || '',
+                    videoMime: wp.videoMime || '',
+                    effects: wp.dir && wp.type !== 'video' ? detectSceneEffects(wp.dir) : {},
+                    config: userCfg
+                };
+                if (bakedWallpaper.effects.rain) console.log(`[壁纸引擎] 检测到场景下雨特效，将用画布实时绘制雨滴 (强度 ${bakedWallpaper.effects.rain.intensity})`);
+                console.log(wp.videoPath
+                    ? `[壁纸引擎] 成功识别视频壁纸: "${wp.title}"，将直接播放原视频: ${wp.videoPath}`
+                    : `[壁纸引擎] 成功提取当前激活壁纸: "${wp.title}" (${wp.type}, ${(buf.length / 1024).toFixed(1)} KB)`);
+            } else {
+                console.warn(`[壁纸引擎] 未能找到激活壁纸的有效预览文件。`);
+            }
+        } catch (err) {
+            console.warn(`[壁纸引擎] 提取壁纸异常: ${err.message}`);
+        }
+    }
 
     const jsSource = `${SIGNATURE_START}
 (() => {
@@ -509,6 +651,446 @@ function generateJs() {
         return sr;
     };
 
+    // Antigravity 官方质感科技蓝黑皮肤 (Obsidian Dark Blue)
+    const USE_DARK_BLUE_THEME = ${USE_DARK_BLUE ? "true" : "false"};
+    if (USE_DARK_BLUE_THEME) {
+        const injectDarkBlueTheme = () => {
+            if (document.getElementById('antigravity-dark-blue-theme')) return;
+            const style = document.createElement('style');
+            style.id = 'antigravity-dark-blue-theme';
+            style.textContent = [
+                ':root, .dark, .dark-theme, .vscode-dark {',
+                '  --primary: #4176e6 !important;',
+                '  --primary-foreground: #ffffff !important;',
+                '  --link: #5686fe !important;',
+                '  --color-primary: #4176e6 !important;',
+                '  --color-primary-foreground: #ffffff !important;',
+                '  --background: #0d1117 !important;',
+                '  --foreground: #e6edf3 !important;',
+                '  --color-background: #0d1117 !important;',
+                '  --color-foreground: #e6edf3 !important;',
+                '  --sidebar: #090d13 !important;',
+                '  --sidebar-secondary: #131722 !important;',
+                '  --sidebar-muted: #0d1117 !important;',
+                '  --color-sidebar: #090d13 !important;',
+                '  --color-sidebar-secondary: #131722 !important;',
+                '  --color-sidebar-muted: #0d1117 !important;',
+                '  --card: #161b22 !important;',
+                '  --card-border: #21262d !important;',
+                '  --border: #21262d !important;',
+                '  --color-card: #161b22 !important;',
+                '  --color-card-border: #21262d !important;',
+                '  --color-border: #21262d !important;',
+                '  --secondary: #161b22 !important;',
+                '  --secondary-foreground: #a0a6b5 !important;',
+                '  --muted: #12161f !important;',
+                '  --muted-foreground: #7d8590 !important;',
+                '  --placeholder: #484f58 !important;',
+                '  --success: #22c55e !important;',
+                '  --warning: #f59e0b !important;',
+                '  --error: #ef4444 !important;',
+                '  --code-foreground: #79c0ff !important;',
+                '  --editor-selection-background: rgba(65, 118, 230, 0.35) !important;',
+                '  --color-selection-background: rgba(65, 118, 230, 0.35) !important;',
+                '  --focus-ring-color: rgba(65, 118, 230, 0.45) !important;',
+                '}',
+                '::-webkit-scrollbar { width: 5px !important; height: 5px !important; }',
+                '::-webkit-scrollbar-track { background: transparent !important; }',
+                '::-webkit-scrollbar-thumb { background: #282f3d !important; border-radius: 999px !important; }',
+                '::-webkit-scrollbar-thumb:hover { background: #4176e6 !important; }',
+                '.bg-sidebar-secondary { background-color: #131722 !important; border: 1px solid #21262d !important; }',
+                'button[class*="bg-primary"], .bg-primary { background-color: #4176e6 !important; color: #ffffff !important; }',
+                'button[class*="bg-primary"]:hover, .bg-primary:hover { background-color: #5686fe !important; box-shadow: 0 0 10px rgba(65, 118, 230, 0.4) !important; }',
+                'textarea:focus, input[type="text"]:focus { border-color: #4176e6 !important; box-shadow: 0 0 0 1px #4176e6, 0 0 8px rgba(65, 118, 230, 0.25) !important; }'
+            ].join('\\n');
+            const head = document.head || document.documentElement;
+            if (head) head.appendChild(style);
+        };
+        injectDarkBlueTheme();
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', injectDarkBlueTheme);
+        }
+    }
+
+    // Wallpaper Engine 实时动态联动换肤引擎 (零依赖、防沙箱拦截)
+    const USE_WE_WALLPAPER = ${USE_WALLPAPER ? "true" : "false"};
+    const BAKED_WE_DATA = ${JSON.stringify(bakedWallpaper)};
+    if (USE_WE_WALLPAPER && BAKED_WE_DATA && (BAKED_WE_DATA.dataUrl || BAKED_WE_DATA.videoPath)) {
+        (function initWallpaperEngine() {
+            let currentWp = BAKED_WE_DATA;
+
+            // 失重亚克力主题 CSS（打包时从 theme-acrylic.css 读入）
+            const ACRYLIC_CSS = ACRYLIC_CSS_PLACEHOLDER;
+
+            // ---------- 颜色工具（与 design/acrylic_preview.html 同一套算法） ----------
+            function rgb2hsl(r, g, b) {
+                r /= 255; g /= 255; b /= 255;
+                const mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2;
+                if (mx === mn) return [0, 0, l];
+                const d = mx - mn, s = l > 0.5 ? d / (2 - mx - mn) : d / (mx + mn);
+                const h = mx === r ? (g - b) / d + (g < b ? 6 : 0) : mx === g ? (b - r) / d + 2 : (r - g) / d + 4;
+                return [h * 60, s, l];
+            }
+            function hsl2rgb(h, s, l) {
+                const k = n => (n + h / 30) % 12, a = s * Math.min(l, 1 - l);
+                const f = n => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+                return [f(0), f(8), f(4)].map(v => Math.round(v * 255));
+            }
+            function luminance(c) {
+                const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+                return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+            }
+            // 调成适合深色 UI 的强调色：饱和度夹在 0.5~0.85，明度固定 0.66
+            function tuneAccent(c) {
+                const hsl = rgb2hsl(c[0], c[1], c[2]);
+                return hsl2rgb(hsl[0], Math.min(0.85, Math.max(0.5, hsl[1])), 0.66);
+            }
+
+            // ---------- 画面分析：色相分布（取色用）+ 平均亮度（自适应用） ----------
+            // 36 个色相桶（每桶 10°），按"饱和度² × 中间调权重"累加
+            function analyzeFrame(src, sw, sh) {
+                const w = 120, h = Math.max(1, Math.round(120 * sh / sw));
+                const cv = document.createElement('canvas'); cv.width = w; cv.height = h;
+                const ctx = cv.getContext('2d', { willReadFrequently: true });
+                ctx.drawImage(src, 0, 0, w, h);
+                const d = ctx.getImageData(0, 0, w, h).data;
+                const bins = [];
+                for (let i = 0; i < 36; i++) bins.push({ w: 0, r: 0, g: 0, b: 0 });
+                let lumSum = 0, n = 0;
+                for (let i = 0; i < d.length; i += 4) {
+                    lumSum += (0.2126 * d[i] + 0.7152 * d[i + 1] + 0.0722 * d[i + 2]) / 255; n++;
+                    const hsl = rgb2hsl(d[i], d[i + 1], d[i + 2]);
+                    if (hsl[1] < 0.18 || hsl[2] < 0.1 || hsl[2] > 0.93) continue;
+                    const wt = hsl[1] * hsl[1] * (1 - Math.abs(hsl[2] - 0.5) * 1.3);
+                    if (wt <= 0) continue;
+                    const bn = bins[Math.floor(hsl[0] / 10) % 36];
+                    bn.w += wt; bn.r += d[i] * wt; bn.g += d[i + 1] * wt; bn.b += d[i + 2] * wt;
+                }
+                return { bins: bins, lum: n ? lumSum / n : 0 };
+            }
+            function mergeBins(a, b) {
+                return a.map((x, i) => ({ w: x.w + b[i].w, r: x.r + b[i].r, g: x.g + b[i].g, b: x.b + b[i].b }));
+            }
+            function accentFromBins(bins) {
+                const top = bins.filter(b => b.w > 0).sort((a, b) => b.w - a.w)[0];
+                if (!top) return null;   // 黑白壁纸：保留默认强调色
+                return tuneAccent([Math.round(top.r / top.w), Math.round(top.g / top.w), Math.round(top.b / top.w)]);
+            }
+            function manualAccent(wp) {
+                const m = wp && wp.config && wp.config.accent;
+                if (typeof m === 'string' && /^#[0-9a-f]{6}$/i.test(m)) return tuneAccent([1, 3, 5].map(i => parseInt(m.slice(i, i + 2), 16)));
+                return null;
+            }
+            function setAccent(c) {
+                const root = document.documentElement;
+                if (!root || !c) return;
+                root.style.setProperty('--ag-accent', c.join(' '));
+                root.style.setProperty('--ag-tint-h', String(Math.round(rgb2hsl(c[0], c[1], c[2])[0])));
+                root.style.setProperty('--ag-accent-ink', luminance(c) > 0.35 ? '6 14 16' : '255 255 255');
+            }
+
+            // ---------- 亮度自适应 ----------
+            // 深色壁纸保持设计 Token 原值；越亮的壁纸，玻璃越不透明、阅读遮罩越深、壁纸压得越暗，保证文字可读。
+            // 用指数平滑（EMA）+ CSS @property 过渡，视频画面明暗变化时不会闪。
+            let adaptBase = null, lumEma = null;
+            function setAdaptive(lum) {
+                const root = document.documentElement;
+                if (!root) return;
+                if (!adaptBase) {
+                    const cs = getComputedStyle(root);
+                    const num = (p, d) => { const v = parseFloat(cs.getPropertyValue(p)); return isNaN(v) ? d : v; };
+                    adaptBase = { glass: num('--ag-glass-a', 0.32), bright: num('--ag-wp-bright', 0.91), scrim: num('--ag-scrim', 0.34) };
+                }
+                lumEma = lumEma === null ? lum : lumEma * 0.7 + lum * 0.3;
+                const t = Math.min(1, Math.max(0, (lumEma - 0.30) / 0.40));
+                root.style.setProperty('--ag-glass-a', (adaptBase.glass + Math.max(0, 0.72 - adaptBase.glass) * t).toFixed(3));
+                root.style.setProperty('--ag-wp-bright', (adaptBase.bright - Math.max(0, adaptBase.bright - 0.6) * t).toFixed(3));
+                root.style.setProperty('--ag-scrim', (adaptBase.scrim + Math.max(0, 0.62 - adaptBase.scrim) * t).toFixed(3));
+            }
+
+            // 静态 / 动图壁纸：取色 + 亮度只需分析一次
+            function analyzeImage(wp) {
+                try {
+                    const manual = manualAccent(wp);
+                    if (manual) setAccent(manual);
+                    if (!wp.dataUrl) return;
+                    const img = new Image();
+                    img.onload = () => {
+                        try {
+                            const r = analyzeFrame(img, img.naturalWidth, img.naturalHeight);
+                            if (!manual) setAccent(accentFromBins(r.bins));
+                            setAdaptive(r.lum);
+                        } catch (e) { console.warn('[Antigravity] 壁纸分析失败，使用默认参数:', e); }
+                    };
+                    img.src = wp.dataUrl;
+                } catch (e) {}
+            }
+
+            // ---------- 视频壁纸：直接播放原视频 ----------
+            // preload 处于 Electron 沙箱中（不能用 http / fs），视频由注入主进程的 agWallpaperVideo.js 提供：
+            // 只监听 127.0.0.1、随机端口，支持 Range 与 CORS。这里通过 IPC 取播放地址。
+            const videoSource = { path: '', mime: 'video/mp4' };
+            function startVideoServer() {
+                const electron = require('electron');
+                return electron.ipcRenderer.invoke('antigravity:wallpaper-video-url', videoSource.path, videoSource.mime);
+            }
+
+            let videoEl = null, sampleTimer = null, accentBins = null, accentSamples = 0;
+            function sampleVideo() {
+                try {
+                    if (!videoEl || videoEl.readyState < 2 || document.hidden || !videoEl.videoWidth) return;
+                    const r = analyzeFrame(videoEl, videoEl.videoWidth, videoEl.videoHeight);
+                    setAdaptive(r.lum);
+                    // 前 6 次采样（约 15 秒）合并色相分布后定下强调色，之后不再变，避免界面颜色跟着画面乱跳
+                    if (!manualAccent(currentWp) && accentSamples < 6) {
+                        accentBins = accentBins ? mergeBins(accentBins, r.bins) : r.bins;
+                        accentSamples++;
+                        const c = accentFromBins(accentBins);
+                        if (c) setAccent(c);
+                    }
+                } catch (e) {}
+            }
+            function unmountVideo() {
+                if (sampleTimer) { clearInterval(sampleTimer); sampleTimer = null; }
+                if (videoEl) { videoEl.pause(); videoEl.removeAttribute('src'); videoEl.load(); videoEl.remove(); videoEl = null; }
+            }
+            function mountVideo(wp, filter) {
+                if (!document.body) {
+                    document.addEventListener('DOMContentLoaded', () => mountVideo(wp, filter), { once: true });
+                    return;
+                }
+                if (!videoEl) {
+                    videoEl = document.createElement('video');
+                    videoEl.id = 'ag-wallpaper-video';
+                    videoEl.muted = true; videoEl.loop = true; videoEl.autoplay = true; videoEl.playsInline = true;
+                    videoEl.crossOrigin = 'anonymous';
+                    videoEl.setAttribute('aria-hidden', 'true');
+                    // 放在 body 最前面（#root 之外），不碰 React 管理的 DOM
+                    document.body.insertBefore(videoEl, document.body.firstChild);
+                    // Chromium 会在窗口被遮挡时暂停静音视频省电，但恢复可见后不会自动续播
+                    const resume = () => { if (videoEl && !document.hidden && videoEl.paused) videoEl.play().catch(() => {}); };
+                    document.addEventListener('visibilitychange', resume);
+                    window.addEventListener('focus', resume);
+                    sampleTimer = setInterval(sampleVideo, 2500);
+                }
+                videoEl.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;object-fit:cover;z-index:0;pointer-events:none;filter:' + filter + ';';
+                if (videoSource.path !== wp.videoPath) {
+                    videoSource.path = wp.videoPath;
+                    videoSource.mime = wp.videoMime || 'video/mp4';
+                    accentBins = null; accentSamples = 0; lumEma = null;
+                    const manual = manualAccent(wp);
+                    if (manual) setAccent(manual);
+                    startVideoServer().then(url => {
+                        if (!videoEl) return;
+                        videoEl.src = url + '?v=' + Date.now();
+                        videoEl.play().catch(() => {});
+                    }).catch(e => console.warn('[Antigravity] 视频壁纸服务启动失败，保留静态封面:', e));
+                }
+            }
+
+            // ---------- 场景特效：下雨 ----------
+            // Wallpaper Engine 的雨是粒子系统实时渲染的，静态原画里没有。这里用一层透明画布重绘：
+            // 远 / 中 / 近三个景深层（远处细、慢、淡，近处长、快、亮），统一带风向倾斜。
+            // 窗口不可见时不绘制；系统开启"减少动态效果"时不启用。
+            const RAIN_LAYERS = [
+                { len: [10, 16], speed: [700, 900], alpha: [0.10, 0.18], width: 0.8, share: 0.5 },
+                { len: [16, 26], speed: [1000, 1300], alpha: [0.16, 0.28], width: 1.0, share: 0.35 },
+                { len: [28, 44], speed: [1500, 1900], alpha: [0.24, 0.38], width: 1.4, share: 0.15 }
+            ];
+            const RAIN_SLANT = 0.12;   // 风向：每下落 1px 向右横移 0.12px
+            let rainCanvas = null, rainRaf = 0, rainDrops = [], rainLast = 0, rainOpts = null;
+            function rainRange(r) { return r[0] + Math.random() * (r[1] - r[0]); }
+            function newDrop(anywhere) {
+                const p = Math.random();
+                let acc = 0, layer = RAIN_LAYERS[0];
+                for (const l of RAIN_LAYERS) { acc += l.share; if (p <= acc) { layer = l; break; } }
+                const W = innerWidth, H = innerHeight, len = rainRange(layer.len);
+                return {
+                    x: Math.random() * (W + H * RAIN_SLANT) - H * RAIN_SLANT,
+                    y: anywhere ? Math.random() * H : -len - Math.random() * 80,
+                    len: len, speed: rainRange(layer.speed), alpha: rainRange(layer.alpha), width: layer.width
+                };
+            }
+            function resizeRain() {
+                if (!rainCanvas) return;
+                const dpr = Math.min(window.devicePixelRatio || 1, 2);
+                rainCanvas.width = Math.round(innerWidth * dpr);
+                rainCanvas.height = Math.round(innerHeight * dpr);
+                const count = Math.round(innerWidth * innerHeight / 3200 * (rainOpts ? rainOpts.intensity : 0.6));
+                rainDrops = [];
+                for (let i = 0; i < count; i++) rainDrops.push(newDrop(true));
+            }
+            function drawRain(t) {
+                rainRaf = requestAnimationFrame(drawRain);
+                if (!rainCanvas || document.hidden) { rainLast = t; return; }
+                const dt = Math.min(0.05, (t - (rainLast || t)) / 1000);
+                rainLast = t;
+                const ctx = rainCanvas.getContext('2d');
+                const dpr = rainCanvas.width / innerWidth;
+                ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+                ctx.clearRect(0, 0, innerWidth, innerHeight);
+                ctx.lineCap = 'round';
+                const H = innerHeight;
+                for (let i = 0; i < rainDrops.length; i++) {
+                    const d = rainDrops[i];
+                    const dy = d.speed * dt;
+                    d.y += dy; d.x += dy * RAIN_SLANT;
+                    if (d.y - d.len > H) { rainDrops[i] = newDrop(false); continue; }
+                    ctx.strokeStyle = 'rgba(214, 232, 240, ' + d.alpha + ')';
+                    ctx.lineWidth = d.width;
+                    ctx.beginPath();
+                    ctx.moveTo(d.x, d.y);
+                    ctx.lineTo(d.x - d.len * RAIN_SLANT, d.y - d.len);
+                    ctx.stroke();
+                }
+            }
+            function unmountRain() {
+                if (rainRaf) cancelAnimationFrame(rainRaf);
+                rainRaf = 0;
+                window.removeEventListener('resize', resizeRain);
+                if (rainCanvas) { rainCanvas.remove(); rainCanvas = null; }
+            }
+            function mountRain(opts) {
+                rainOpts = opts || { intensity: 0.6 };
+                if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+                if (!document.body) {
+                    document.addEventListener('DOMContentLoaded', () => mountRain(opts), { once: true });
+                    return;
+                }
+                // 启动时页面会重新加载一次：旧页面上的画布已经脱离文档，要重建
+                if (rainCanvas && !rainCanvas.isConnected) unmountRain();
+                if (rainCanvas) return;
+                rainCanvas = document.createElement('canvas');
+                rainCanvas.id = 'ag-rain-canvas';
+                rainCanvas.setAttribute('aria-hidden', 'true');
+                rainCanvas.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;z-index:0;pointer-events:none;';
+                // 放在视频壁纸之上、#root 之下，不碰 React 管理的 DOM
+                const video = document.getElementById('ag-wallpaper-video');
+                document.body.insertBefore(rainCanvas, video ? video.nextSibling : document.body.firstChild);
+                window.addEventListener('resize', resizeRain);
+                resizeRain();
+                rainRaf = requestAnimationFrame(drawRain);
+            }
+
+            function applyWallpaper(wp) {
+                try {
+                    if (!wp || !(wp.dataUrl || wp.videoPath)) return;
+                    const cfg = wp.config || {};
+                    if (cfg.enabled === false) return;
+
+                    const blurVal = cfg.blur ? cfg.blur + 'px' : '0px';
+                    const contVal = typeof cfg.contrast === 'number' ? cfg.contrast : 105;
+                    const satVal = typeof cfg.saturate === 'number' ? cfg.saturate : 110;
+                    const artFilter = 'brightness(var(--ag-wp-bright, .91)) contrast(' + contVal + '%) saturate(' + satVal + '%) blur(' + blurVal + ')';
+
+                    // 1. 注入或更新样式：L0 壁纸层 + 失重亚克力主题（theme-acrylic.css）
+                    let styleEl = document.getElementById('antigravity-we-style');
+                    if (!styleEl) {
+                        styleEl = document.createElement('style');
+                        styleEl.id = 'antigravity-we-style';
+                        const head = document.head || document.documentElement;
+                        if (head) head.appendChild(styleEl);
+                    }
+
+                    styleEl.textContent = [
+                        'html, body {',
+                        '  background-color: #05080a !important;',
+                        '  overflow: hidden !important;',
+                        '  width: 100% !important;',
+                        '  height: 100% !important;',
+                        '  margin: 0 !important;',
+                        '  padding: 0 !important;',
+                        '}',
+                        '/* L0 艺术层：静态壁纸 / 视频壁纸加载前的封面，满铺且不整体压暗（亮度由 --ag-wp-bright 控制） */',
+                        'body::before {',
+                        '  content: "" !important;',
+                        '  position: fixed !important;',
+                        '  inset: -10px !important;',
+                        '  z-index: 0 !important;',
+                        '  pointer-events: none !important;',
+                        wp.dataUrl ? '  background: url(\"' + wp.dataUrl + '\") center / cover no-repeat !important;' : '  background: none !important;',
+                        '  filter: ' + artFilter + ' !important;',
+                        '}',
+                        '/* 局部遮罩：只压暗顶部、底部、左侧，保证文字可读；深度跟随 --ag-scrim（亮色壁纸自动加深） */',
+                        'body::after {',
+                        '  content: "" !important;',
+                        '  position: fixed !important;',
+                        '  inset: 0 !important;',
+                        '  z-index: 0 !important;',
+                        '  pointer-events: none !important;',
+                        '  background:',
+                        '    linear-gradient(180deg, rgb(0 0 0 / calc(var(--ag-scrim, .34) * .94)) 0, rgb(0 0 0 / calc(var(--ag-scrim, .34) * .41)) 60px, transparent 140px),',
+                        '    linear-gradient(0deg, rgb(0 0 0 / calc(var(--ag-scrim, .34) * 1.24)) 0, transparent 240px),',
+                        '    linear-gradient(90deg, rgb(0 0 0 / calc(var(--ag-scrim, .34) * .88)) 0, transparent 380px) !important;',
+                        '}',
+                        '#root {',
+                        '  position: relative !important;',
+                        '  z-index: 1 !important;',
+                        '  width: 100% !important;',
+                        '  height: 100% !important;',
+                        '  overflow: hidden !important;',
+                        '  background-color: transparent !important;',
+                        '}',
+                        ACRYLIC_CSS
+                    ].join('\\n');
+
+                    // 2. 视频壁纸挂载 <video> 播放原视频；其他壁纸分析一次画面（取色 + 亮度自适应）
+                    if (wp.type === 'video' && wp.videoPath) {
+                        mountVideo(wp, artFilter);
+                    } else {
+                        unmountVideo();
+                        // 启动时页面会重新加载一次，写在旧 <html> 上的结果会丢：换了壁纸，或者当前页面上还没有分析结果，就（重新）分析
+                        if (wp !== analyzeImage.last || !document.documentElement.style.getPropertyValue('--ag-glass-a')) { analyzeImage.last = wp; analyzeImage(wp); }
+                    }
+
+                    // 3. 场景特效（下雨）：Wallpaper Engine 实时渲染的粒子，用画布重绘
+                    if (wp.effects && wp.effects.rain) mountRain(wp.effects.rain); else unmountRain();
+
+                    console.log('[Antigravity] 联动 Wallpaper Engine 渲染成功: ' + (wp.title || '壁纸已应用') + (wp.videoPath ? '（原视频播放）' : ''));
+                } catch(e) {
+                    console.error('[Antigravity] Wallpaper Engine 渲染异常:', e);
+                }
+            }
+
+            // 多时机挂载保证无论 DOM 加载早晚均能成功绘制
+            applyWallpaper(currentWp);
+            if (document.readyState === 'loading') {
+                document.addEventListener('DOMContentLoaded', () => applyWallpaper(currentWp));
+            }
+            window.addEventListener('load', () => applyWallpaper(currentWp));
+            setTimeout(() => applyWallpaper(currentWp), 100);
+            setTimeout(() => applyWallpaper(currentWp), 500);
+
+            // 尝试注册 IPC 监听（若主进程开启了实时推送）
+            try {
+                const electron = require('electron');
+                if (electron && electron.ipcRenderer) {
+                    electron.ipcRenderer.on('antigravity:wallpaper-update', (_e, newWp) => {
+                        if (newWp) {
+                            currentWp = newWp;
+                            applyWallpaper(currentWp);
+                        }
+                    });
+                }
+            } catch(e) {}
+
+            // 原生窗口按钮区（最小化/最大化/关闭）：主进程把背景写死成 #131313，CSS 改不到。
+            // 拦截前端发出的 set-title-bar-overlay 请求，统一改成透明，切换主题后也不会变回深灰。
+            try {
+                const electron = require('electron');
+                const ipc = electron && electron.ipcRenderer;
+                if (ipc && process.platform === 'win32') {
+                    const TITLE_BAR_OVERLAY = { color: '#00000000', symbolColor: '#dde7e9' };
+                    const origInvoke = ipc.invoke.bind(ipc);
+                    ipc.invoke = (channel, ...args) => channel === 'window:set-title-bar-overlay'
+                        ? origInvoke(channel, TITLE_BAR_OVERLAY)
+                        : origInvoke(channel, ...args);
+                    origInvoke('window:set-title-bar-overlay', TITLE_BAR_OVERLAY).catch(() => {});
+                }
+            } catch(e) {}
+        })();
+    }
+
     // 强力多阶段触发绑定
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', startEngine);
@@ -524,7 +1106,9 @@ function generateJs() {
 })();
 ${SIGNATURE_END}`;
 
-    return jsSource.replace("DICT_PLACEHOLDER", dictJson).replace("REPLACEMENT_ENTRIES_PLACEHOLDER", entriesJson);
+    const acrylicCssPath = path.join(__dirname, "theme-acrylic.css");
+    const acrylicJson = JSON.stringify(fs.existsSync(acrylicCssPath) ? fs.readFileSync(acrylicCssPath, "utf8") : "");
+    return jsSource.replace("DICT_PLACEHOLDER", () => dictJson).replace("REPLACEMENT_ENTRIES_PLACEHOLDER", () => entriesJson).replace("ACRYLIC_CSS_PLACEHOLDER", () => acrylicJson);
 }
 
 function cleanJsContent(content) {
@@ -857,6 +1441,23 @@ function install20(resourcesDir) {
     fs.writeFileSync(preloadPath, newContent, 'utf-8');
     console.log(`[修改] 注入成功！`);
 
+    // 3.0 视频壁纸服务：preload 处于 Electron 沙箱中，不能用 http / fs，
+    //     所以把"只监听 127.0.0.1 的单文件视频服务"放进主进程，preload 通过 IPC 取播放地址。
+    if (USE_WALLPAPER) {
+        const mainPath = path.join(tempDir, "dist", "main.js");
+        const videoModulePath = path.join(tempDir, "dist", "agWallpaperVideo.js");
+        if (fs.existsSync(mainPath)) {
+            fs.writeFileSync(videoModulePath, WALLPAPER_VIDEO_MAIN_MODULE, 'utf-8');
+            const mainContent = fs.readFileSync(mainPath, 'utf-8');
+            if (!mainContent.includes("require('./agWallpaperVideo')")) {
+                fs.writeFileSync(mainPath, mainContent + "\n" + SIGNATURE_START + "\ntry { require('./agWallpaperVideo'); } catch (e) { console.error('[Antigravity] 视频壁纸服务加载失败:', e); }\n" + SIGNATURE_END + "\n", 'utf-8');
+            }
+            console.log(`[修改] 视频壁纸服务已注入主进程 (dist/agWallpaperVideo.js)`);
+        } else {
+            console.warn(`[警告] 未找到 dist/main.js，视频壁纸将只显示静态封面。`);
+        }
+    }
+
     // 3.1 注入 menu.js (系统菜单汉化)
     const menuPath = path.join(tempDir, "dist", "menu.js");
     if (fs.existsSync(menuPath)) {
@@ -1067,6 +1668,30 @@ function install20(resourcesDir) {
         updaterContent = updaterContent.replace(targetOptions, replacementOptions);
         fs.writeFileSync(updaterPath, updaterContent, 'utf-8');
         console.log(`[修改] 更新弹窗汉化注入成功！`);
+    }
+
+    // 3.5 注入 utils.js (开启 DevTools)
+    const utilsPath = path.join(tempDir, "dist", "utils.js");
+    if (fs.existsSync(utilsPath)) {
+        let utilsContent = fs.readFileSync(utilsPath, 'utf-8');
+        utilsContent = utilsContent.replace('devTools: !electron_1.app.isPackaged', 'devTools: true');
+        fs.writeFileSync(utilsPath, utilsContent, 'utf-8');
+    }
+
+    // 3.6 注入 keybindings.js (支持 F12 或 Ctrl+Shift+I 快捷键打开控制台)
+    const kbPath = path.join(tempDir, "dist", "keybindings.js");
+    if (fs.existsSync(kbPath)) {
+        let kbContent = fs.readFileSync(kbPath, 'utf-8');
+        if (!kbContent.includes('toggleDevTools')) {
+            const kbTarget = "if (isCmdOrCtrl && input.shift && input.key.toLowerCase() === 'n') {";
+            const kbReplacement = `if ((isCmdOrCtrl && input.shift && input.key.toLowerCase() === 'i') || input.key === 'F12') {
+                win.webContents.toggleDevTools();
+                event.preventDefault();
+            }
+            if (isCmdOrCtrl && input.shift && input.key.toLowerCase() === 'n') {`;
+            kbContent = kbContent.replace(kbTarget, kbReplacement);
+            fs.writeFileSync(kbPath, kbContent, 'utf-8');
+        }
     }
 
     // 4. 重新打包
@@ -1302,7 +1927,7 @@ function restoreProxyIfNeeded(installDir) {
 function main() {
     let huifu = false;
     let manualDir = "";
-    let noKill = false;
+    let noKill = true; // 默认不主动杀死客户端，防止中断用户当前的智能体配对会话
 
     const args = process.argv.slice(2);
     for (let i = 0; i < args.length; i++) {
@@ -1379,8 +2004,8 @@ function main() {
         }
     }
 
-    // 5. 校验通过且原来客户端在运行，则自动重新启动客户端
-    if (success && wasAppRunning) {
+    // 5. 校验通过且原来客户端被关闭，则自动重新启动客户端
+    if (success && wasAppRunning && !noKill) {
         console.log("\n[启动] 检测到安装前反重力客户端处于开启状态，正在重新启动客户端...");
         try {
             if (process.platform === 'win32') {

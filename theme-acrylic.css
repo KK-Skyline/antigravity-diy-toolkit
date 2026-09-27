@@ -1,0 +1,253 @@
+/* ==================================================================
+   Antigravity「失重亚克力」主题
+   —— 由 localization_engine.js --wallpaper 在打包时读入并注入 preload.js
+   设计稿：design/acrylic_preview.html
+
+   ⚠ 关键约束（实测）：亚克力元素的任何祖先都不能带
+     mask / filter / opacity<1 / clip-path / mix-blend-mode，
+     否则该祖先成为 Chromium 的 "backdrop root"，backdrop-filter 会失效。
+   ================================================================== */
+
+/* ---------- 设计 Token（只放在 :root，运行时取色会写到 html 的内联样式覆盖） ---------- */
+:root {
+  --ag-accent: 125 212 203;          /* #7dd4cb，运行时从壁纸自动提取后覆盖 */
+  --ag-accent-ink: 6 14 16;
+  --ag-tint-h: 174;
+
+  --ag-glass-a: .32;
+  --ag-blur: 0px;                    /* 侧栏 / 输入框：清玻璃 */
+  --ag-blur-sticky: 12px;            /* 吸顶消息背后是正文，必须保留模糊，否则透字 */
+  --ag-sat: 170%;
+  --ag-r-lg: 22px;
+  --ag-r-md: 14px;
+  --ag-r-sm: 10px;
+  --ag-gap: 13px;
+  --ag-scrim: .34;
+  --ag-wp-bright: .91;
+
+  --ag-fg: 236 242 244;
+  --ag-glass-tint: hsl(var(--ag-tint-h) 28% 7% / var(--ag-glass-a));
+  --ag-glass-tint-hi: hsl(var(--ag-tint-h) 26% 10% / calc(var(--ag-glass-a) + .08));
+  --ag-glass-edge: rgb(255 255 255 / .09);
+  --ag-glass-edge-top: rgb(255 255 255 / .20);
+  --ag-shadow: 0 18px 50px rgb(0 0 0 / .38), 0 2px 8px rgb(0 0 0 / .22);
+  --ag-state-hover: rgb(255 255 255 / .06);
+  --ag-state-selected: rgb(255 255 255 / .10);
+  --ag-state-primary: rgb(var(--ag-accent) / .16);
+  --ag-state-primary-hover: rgb(var(--ag-accent) / .24);
+  --ag-popover: hsl(var(--ag-tint-h) 22% 8% / .92);
+}
+
+/* ---------- 亮度自适应的平滑过渡 ----------
+   运行时会按壁纸亮度改写这三个值（写在 html 的内联样式上）。注册成 <number> 类型后才能做过渡，
+   视频画面明暗变化时玻璃和遮罩会缓慢跟随，不会闪。 */
+@property --ag-glass-a  { syntax: '<number>'; inherits: true; initial-value: .32; }
+@property --ag-wp-bright { syntax: '<number>'; inherits: true; initial-value: .91; }
+@property --ag-scrim    { syntax: '<number>'; inherits: true; initial-value: .34; }
+html { transition: --ag-glass-a 1.2s ease, --ag-wp-bright 1.2s ease, --ag-scrim 1.2s ease; }
+
+/* ---------- 覆盖 Antigravity 自身的颜色变量（它会在 .dark 等元素上重新声明，所以要一起覆盖） ---------- */
+:root, .dark, .dark-theme, .theme-dark, .vscode-dark, .theme-standalone, [data-theme="dark"] {
+  --background: transparent !important;            --color-background: transparent !important;
+  --sidebar: transparent !important;               --color-sidebar: transparent !important;
+  --sidebar-muted: var(--ag-state-hover) !important;        --color-sidebar-muted: var(--ag-state-hover) !important;
+  --sidebar-secondary: var(--ag-state-selected) !important; --color-sidebar-secondary: var(--ag-state-selected) !important;
+  --card: hsl(var(--ag-tint-h) 20% 8% / .5) !important;     --color-card: hsl(var(--ag-tint-h) 20% 8% / .5) !important;
+  --card-border: var(--ag-glass-edge) !important;           --color-card-border: var(--ag-glass-edge) !important;
+  --border: var(--ag-glass-edge) !important;                --color-border: var(--ag-glass-edge) !important;
+  --muted: rgb(255 255 255 / .06) !important;               --color-muted: rgb(255 255 255 / .06) !important;
+  --secondary: rgb(255 255 255 / .07) !important;           --color-secondary: rgb(255 255 255 / .07) !important;
+  --editor: hsl(var(--ag-tint-h) 20% 6% / .6) !important;   --color-editor: hsl(var(--ag-tint-h) 20% 6% / .6) !important;
+  --primary: rgb(var(--ag-accent)) !important;              --color-primary: rgb(var(--ag-accent)) !important;
+  --primary-foreground: rgb(var(--ag-accent-ink)) !important; --color-primary-foreground: rgb(var(--ag-accent-ink)) !important;
+  --link: rgb(var(--ag-accent)) !important;
+  --focus-ring-color: rgb(var(--ag-accent) / .45) !important;
+  --editor-selection-background: rgb(var(--ag-accent) / .30) !important;
+  --color-selection-background: rgb(var(--ag-accent) / .30) !important;
+}
+.theme-standalone { background-color: transparent !important; }
+::selection { background: rgb(var(--ag-accent) / .32); }
+input, textarea, [contenteditable="true"] { caret-color: rgb(var(--ag-accent)) !important; }
+
+/* ---------- 细滚动条：平时隐形，悬停出现 ---------- */
+::-webkit-scrollbar { width: 8px !important; height: 8px !important; }
+::-webkit-scrollbar-button, ::-webkit-scrollbar-corner { display: none !important; background: transparent !important; }
+::-webkit-scrollbar-track { background: transparent !important; }
+::-webkit-scrollbar-thumb { background: transparent !important; border-radius: 999px !important; border: 2px solid transparent !important; background-clip: padding-box !important; }
+*:hover::-webkit-scrollbar-thumb { background-color: rgb(255 255 255 / .16) !important; }
+::-webkit-scrollbar-thumb:hover { background-color: rgb(var(--ag-accent) / .55) !important; }
+
+/* ==================================================================
+   标题栏：完全透明
+   ================================================================== */
+[data-testid="title-menu-bar"] { background: transparent !important; }
+
+/* ==================================================================
+   侧栏：悬浮岛
+   ================================================================== */
+.bg-sidebar:has(> .px-2 [data-testid="new-conversation-button"]) {
+  margin: 0 0 var(--ag-gap) var(--ag-gap) !important;
+  width: calc(100% - var(--ag-gap)) !important;
+  height: calc(100% - var(--ag-gap)) !important;
+  border-radius: var(--ag-r-lg) !important;
+  background: var(--ag-glass-tint) !important;
+  -webkit-backdrop-filter: blur(var(--ag-blur)) saturate(var(--ag-sat)) !important;
+  backdrop-filter: blur(var(--ag-blur)) saturate(var(--ag-sat)) !important;
+  border: 1px solid var(--ag-glass-edge) !important;
+  border-top-color: var(--ag-glass-edge-top) !important;
+  box-shadow: var(--ag-shadow) !important;
+  overflow: hidden !important;
+}
+/* 左上角的"收起侧栏 / 后退 / 前进"浮层跟着岛一起内移 */
+.absolute.top-0.left-0.z-50.shrink-0:has([data-testid="sidebar-toggle"]) { transform: translateX(var(--ag-gap)); }
+/* 侧栏和主区之间的 1px 硬分割线去掉，让壁纸从中间透出来 */
+.flex:has([data-testid="new-conversation-button"]) + .bg-border { background: transparent !important; }
+
+/* 条目圆角统一 */
+[data-testid="new-conversation-button"], [data-testid="history-button"], [data-testid="automations-button"],
+[data-testid="settings-button"], [data-testid="conversation-row-sidebar"], .group\/headerbtn {
+  border-radius: var(--ag-r-sm) !important;
+}
+/* 主操作"新建对话"：强调色淡染 */
+[data-testid="new-conversation-button"] {
+  background: var(--ag-state-primary) !important;
+  border-color: transparent !important;
+  color: rgb(var(--ag-fg)) !important;
+}
+[data-testid="new-conversation-button"]:hover { background: var(--ag-state-primary-hover) !important; }
+[data-testid="new-conversation-button"] svg { color: rgb(var(--ag-accent)) !important; }
+/* 选中对话：白色叠加 + 左侧强调色竖条 */
+[data-testid="conversation-row-sidebar"][data-selected="true"] { background: var(--ag-state-selected) !important; }
+[data-testid="conversation-row-sidebar"][data-selected="true"] .text-secondary-foreground { color: rgb(var(--ag-fg)) !important; }
+[data-testid="conversation-row-sidebar"][data-selected="true"]::before {
+  content: ""; position: absolute; left: 14px; top: 50%; width: 3px; height: 14px; margin-top: -7px;
+  border-radius: 3px; background: rgb(var(--ag-accent)); box-shadow: 0 0 10px rgb(var(--ag-accent) / .6);
+  pointer-events: none;
+}
+
+/* ==================================================================
+   主区
+   ================================================================== */
+/* 阅读列遮罩：柔和、无边界（background 不会影响子元素的 backdrop-filter） */
+[data-testid="conversation-view"] {
+  background: linear-gradient(90deg, transparent, rgb(2 6 8 / var(--ag-scrim)) 18%, rgb(2 6 8 / var(--ag-scrim)) 82%, transparent)
+              center / min(1040px, 100%) 100% no-repeat !important;
+}
+[data-testid="install-editor"] {
+  border-radius: 999px !important;
+  background: rgb(255 255 255 / .06) !important;
+  border-color: rgb(255 255 255 / .09) !important;
+}
+
+/* 正文：轻微投影保证壁纸上的可读性；代码标签、链接、列表符号用强调色 */
+.leading-relaxed.select-text { text-shadow: 0 1px 2px rgb(0 0 0 / .45); }
+.leading-relaxed.select-text code:not(pre code) {
+  color: rgb(var(--ag-accent)) !important;
+  background: rgb(var(--ag-accent) / .12) !important;
+  border: 1px solid rgb(var(--ag-accent) / .18);
+  border-radius: 6px !important;
+  text-shadow: none;
+}
+.leading-relaxed.select-text pre, .leading-relaxed.select-text pre * { text-shadow: none; }
+.leading-relaxed.select-text a { color: rgb(var(--ag-accent)) !important; }
+.leading-relaxed.select-text li::marker { color: rgb(var(--ag-accent) / .8); }
+
+/* ---------- 吸顶用户消息 ---------- */
+/* 外层整行容器原本用 bg-background + 渐变做遮挡，现在透明，只让气泡本身成为亚克力 */
+.sticky.top-0 > .md-sticky-message-bleed { background: transparent !important; }
+.sticky.top-0 > .md-sticky-message-bleed::after { display: none !important; }
+.md-sticky-message-bleed [data-testid="lifted-context-menu-trigger"] {
+  padding: 0 !important;
+  border-radius: var(--ag-r-md) !important;
+  background: var(--ag-glass-tint) !important;
+  -webkit-backdrop-filter: blur(var(--ag-blur-sticky)) saturate(var(--ag-sat)) !important;
+  backdrop-filter: blur(var(--ag-blur-sticky)) saturate(var(--ag-sat)) !important;
+  border: 1px solid var(--ag-glass-edge) !important;
+  border-top-color: rgb(255 255 255 / .18) !important;
+  box-shadow: 0 8px 28px rgb(0 0 0 / .3) !important;
+}
+.md-sticky-message-bleed [data-testid="lifted-context-menu-trigger"] > .bg-card { background: transparent !important; }
+
+/* ---------- 输入区 ---------- */
+/* 外壳不再是一整块：任务托盘和输入框拆成两块独立的亚克力 */
+[id="antigravity.agentSidePanelInputBox"] {
+  background: transparent !important;
+  -webkit-backdrop-filter: none !important;
+  backdrop-filter: none !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+  border-radius: 0 !important;
+}
+[id="antigravity.agentSidePanelInputBox"] > .bg-card,
+[data-testid="running-items-panel"].grid-rows-\[1fr\] > div {
+  background: var(--ag-glass-tint) !important;
+  -webkit-backdrop-filter: blur(var(--ag-blur)) saturate(var(--ag-sat)) !important;
+  backdrop-filter: blur(var(--ag-blur)) saturate(var(--ag-sat)) !important;
+  border: 1px solid var(--ag-glass-edge) !important;
+  border-top-color: var(--ag-glass-edge-top) !important;
+  box-shadow: var(--ag-shadow) !important;
+}
+[id="antigravity.agentSidePanelInputBox"] > .bg-card {
+  border-radius: var(--ag-r-lg) !important;
+  transition: box-shadow .3s ease, background .3s ease, border-color .3s ease !important;
+}
+/* 任务托盘：展开时是一块独立的小面板，和输入框之间留 8px */
+[data-testid="running-items-panel"].grid-rows-\[1fr\] { margin-bottom: 8px; }
+[data-testid="running-items-panel"] > div { border-radius: var(--ag-r-md) !important; }
+/* 聚焦：不是蓝色描边环，而是整体提亮 + 下方一团强调色光晕 */
+[id="antigravity.agentSidePanelInputBox"]:focus-within > .bg-card {
+  background: var(--ag-glass-tint-hi) !important;
+  border-top-color: rgb(255 255 255 / .34) !important;
+  box-shadow: var(--ag-shadow), 0 0 0 1px rgb(var(--ag-accent) / .28), 0 14px 60px -12px rgb(var(--ag-accent) / .42) !important;
+}
+[id="antigravity.agentSidePanelInputBox"] [contenteditable="true"],
+[id="antigravity.agentSidePanelInputBox"] textarea { background: transparent !important; }
+/* 窗格失焦时 Antigravity 会把输入区降到 75% 不透明度 —— 这会让亚克力失效，覆盖掉 */
+[class*="group-data-[pane-unfocused]/pane:opacity-75"] { opacity: 1 !important; }
+/* 发送键：有内容时变成强调色实心圆 */
+[data-testid="send-button"]:not(.cursor-not-allowed) {
+  background: rgb(var(--ag-accent)) !important;
+  color: rgb(var(--ag-accent-ink)) !important;
+  box-shadow: 0 4px 18px rgb(var(--ag-accent) / .45) !important;
+}
+
+/* ==================================================================
+   浮层：下拉菜单 / 列表 / 提示 —— 背后是任意内容，需要接近实色
+   ================================================================== */
+[role="menu"], [role="listbox"], [role="tooltip"] {
+  background: var(--ag-popover) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(160%) !important;
+  backdrop-filter: blur(24px) saturate(160%) !important;
+  border: 1px solid var(--ag-glass-edge) !important;
+  border-radius: var(--ag-r-md) !important;
+  box-shadow: var(--ag-shadow) !important;
+}
+
+/* ==================================================================
+   设置面板与模态弹窗：保持实色，彻底避免透字
+   （旧版用 [class*="backdrop"]，会误伤 Antigravity 自己的 backdrop-blur-* 元素）
+   ================================================================== */
+.settings-modal-backdrop, .overlay-backdrop, [data-radix-backdrop] {
+  background-color: rgb(5 8 10 / .72) !important;
+  -webkit-backdrop-filter: blur(12px) !important;
+  backdrop-filter: blur(12px) !important;
+}
+.settings-modal-container, [class*="settings-modal-container"], [role="dialog"], [data-radix-dialog-content] {
+  --background: #0c1113 !important;  --color-background: #0c1113 !important;
+  --sidebar: #090d0f !important;     --color-sidebar: #090d0f !important;
+  --card: #141a1d !important;        --color-card: #141a1d !important;
+  --muted: #1d2427 !important;       --color-muted: #1d2427 !important;
+  --secondary: #1a2124 !important;   --color-secondary: #1a2124 !important;
+  background-color: #0c1113 !important;
+  border: 1px solid rgb(255 255 255 / .12) !important;
+  border-radius: var(--ag-r-lg) !important;
+  box-shadow: 0 25px 60px rgb(0 0 0 / .8) !important;
+}
+[role="dialog"] .bg-background, .settings-modal-container .bg-background { background-color: #0c1113 !important; }
+[role="dialog"] .bg-sidebar, .settings-modal-container .bg-sidebar { background-color: #090d0f !important; }
+[role="dialog"] .bg-card, .settings-modal-container .bg-card { background-color: #141a1d !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition: none !important; }
+}

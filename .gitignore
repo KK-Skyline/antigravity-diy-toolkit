@@ -4,6 +4,17 @@ node_modules/
 .DS_Store
 AGENTS.md
 
+# Python & extraction caches
+__pycache__/
+*.py[cod]
+extracted_*/
+test_*
+dump_*
+orig_*
+preview_frame*
+*.bak
+*.log
+
 # Tool-specific exclusions
 .reasonix/
 .codex/
@@ -12,3 +23,4 @@ codex/
 
 # Proxy configuration & injection modules (local only)
 proxy_config/
+
