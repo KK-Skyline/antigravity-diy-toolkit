@@ -87,7 +87,23 @@ try {
     fs.writeFileSync(path.join(resources, 'app.asar.baseline.json'), JSON.stringify({ sha256: backupHash }));
     const unconfirmedPointer = fs.readFileSync(path.join(resources, 'app.asar.baseline.json'));
     assert.throws(() => tx.prepareBaseline(resources), /explicit confirmation/);
+    assert.throws(() => tx.restore(resources), /explicit confirmation/);
     assert.deepEqual(fs.readFileSync(path.join(resources, 'app.asar.baseline.json')), unconfirmedPointer);
+    assert.equal(hash(live), originalHash);
+    assert.equal(hash(backup), backupHash);
+    tx.restore(resources, { confirmUnverified: true });
+    assert.equal(JSON.parse(fs.readFileSync(path.join(resources, 'app.asar.baseline.json'))).userConfirmedUnverified, true);
+    tx.restore(resources);
+    const confirmedMetadata = fs.readFileSync(`${backup}.json`);
+    fs.writeFileSync(`${backup}.json`, JSON.stringify({ ...JSON.parse(confirmedMetadata), size: 1 }));
+    assert.throws(() => tx.restore(resources), /verification failed/);
+    fs.writeFileSync(`${backup}.json`, confirmedMetadata);
+    fs.writeFileSync(path.join(resources, 'app.asar.baseline.json'),
+        JSON.stringify({ sha256: '0'.repeat(64), userConfirmedUnverified: true }));
+    assert.throws(() => tx.restore(resources));
+    assert.equal(hash(live), originalHash);
+    assert.equal(hash(backup), backupHash);
+    fs.writeFileSync(path.join(resources, 'app.asar.baseline.json'), unconfirmedPointer);
     assert.equal(tx.prepareBaseline(resources, { confirmUnverified: true }), backup);
     const pointerBeforeTamper = fs.readFileSync(path.join(resources, 'app.asar.baseline.json'));
     fs.writeFileSync(path.join(source, 'dist', 'main.js'), 'third-party edit');

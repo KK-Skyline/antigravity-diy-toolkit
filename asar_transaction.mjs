@@ -213,6 +213,15 @@ function verifyBaseline(dir, sha) {
     return { file, info };
 }
 
+function verifiedConfirmedBaseline(dir, { sha256, userConfirmedUnverified }, confirmUnverified) {
+    const baseline = verifyBaseline(dir, sha256);
+    if (userConfirmedUnverified !== true) {
+        if (!confirmUnverified) throw new Error('Existing ASAR baseline requires explicit confirmation of unverified provenance');
+        writeJson(pointerPath(dir), { sha256, userConfirmedUnverified: true });
+    }
+    return baseline;
+}
+
 function saveBaseline(dir, source, sidecar, label) {
     const info = inspectArchive(source, sidecar);
     if (info.localized) throw new Error('Refusing localized ASAR as clean baseline');
@@ -281,12 +290,9 @@ export function prepareBaseline(dir, { confirmUnverified = false } = {}) {
         return info.localized ? importLegacy(dir, info.version, true) :
             saveBaseline(dir, live, `${live}.unpacked`, 'user-confirmed-unverified-live');
     }
-    const { sha256, userConfirmedUnverified } = JSON.parse(fs.readFileSync(pointer, 'utf8'));
-    const baseline = verifyBaseline(dir, sha256);
-    if (userConfirmedUnverified !== true) {
-        if (!confirmUnverified) throw new Error('Existing ASAR baseline requires explicit confirmation of unverified provenance');
-        writeJson(pointer, { sha256, userConfirmedUnverified: true });
-    }
+    const pointerInfo = JSON.parse(fs.readFileSync(pointer, 'utf8'));
+    const baseline = verifiedConfirmedBaseline(dir, pointerInfo, confirmUnverified);
+    const { sha256 } = pointerInfo;
     if (!info.localized) {
         if (hashFile(live) === sha256 && info.unpackedSha256 === baseline.info.unpackedSha256) return baseline.file;
         if (!confirmUnverified) throw new Error('Unlocalized ASAR does not match confirmed baseline; explicit confirmation required');
@@ -571,8 +577,9 @@ export function restore(dir, { confirmUnverified = false } = {}) {
     if (fs.existsSync(`${livePath(dir)}.rollback`)) recover(dir, { rescueSidecar: true });
     const pointer = pointerPath(dir);
     if (!fs.existsSync(pointer)) importLegacy(dir, null, confirmUnverified);
-    const { sha256 } = JSON.parse(fs.readFileSync(pointer, 'utf8'));
-    const baseline = verifyBaseline(dir, sha256);
+    const pointerInfo = JSON.parse(fs.readFileSync(pointer, 'utf8'));
+    const baseline = verifiedConfirmedBaseline(dir, pointerInfo, confirmUnverified);
+    const { sha256 } = pointerInfo;
     const live = livePath(dir);
     const next = path.join(dir, `app.asar.restore-${unique()}`);
     const nextSidecar = `${next}.unpacked`;
