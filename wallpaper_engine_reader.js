@@ -129,6 +129,10 @@ function parseWallpaperDir(dir, monitorKey = 'Default', configPath = '') {
         }
         return result;
     }
+    // project.json 声明是视频，但视频文件不存在（通常是创意工坊还没下载完）
+    if (projectFile.endsWith('.mp4') || projectFile.endsWith('.webm')) {
+        result.videoMissing = true;
+    }
 
     // 2. 场景 / 图片壁纸的智能多级回退候选链：
     // ① 高清超清动画帧 preview_animated.webp (1600x900 丝滑动态，清晰度与动感兼得)

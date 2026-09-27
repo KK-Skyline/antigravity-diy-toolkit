@@ -218,6 +218,36 @@ function loadDictionary() {
     return totalMap;
 }
 
+// 是否是 Wallpaper Engine 自带的低清缩略图（preview.gif / preview.jpg 等，通常只有 200px 左右）。
+// 我们自己生成的 preview_hd.jpg / preview_animated.webp 不算。
+function isLowResThumbnail(file) {
+    if (!file || !fs.existsSync(file)) return true;
+    const base = path.basename(file).toLowerCase();
+    if (base.startsWith('preview_hd') || base.startsWith('preview_animated')) return false;
+    try {
+        const buf = Buffer.alloc(64 * 1024);
+        const fd = fs.openSync(file, 'r');
+        const n = fs.readSync(fd, buf, 0, buf.length, 0);
+        fs.closeSync(fd);
+        let w = 0, h = 0;
+        if (buf.toString('ascii', 0, 3) === 'GIF') { w = buf.readUInt16LE(6); h = buf.readUInt16LE(8); }
+        else if (buf.readUInt32BE(0) === 0x89504e47) { w = buf.readUInt32BE(16); h = buf.readUInt32BE(20); }
+        else if (buf[0] === 0xff && buf[1] === 0xd8) {
+            // JPEG：找 SOF0/SOF2 段读尺寸
+            for (let i = 2; i + 9 < n;) {
+                if (buf[i] !== 0xff) { i++; continue; }
+                const marker = buf[i + 1], len = buf.readUInt16BE(i + 2);
+                if (marker === 0xc0 || marker === 0xc2) { h = buf.readUInt16BE(i + 5); w = buf.readUInt16BE(i + 7); break; }
+                i += 2 + len;
+            }
+        }
+        if (!w || !h) return false;
+        return Math.min(w, h) < 720;
+    } catch (e) {
+        return false;
+    }
+}
+
 // 场景壁纸里由 Wallpaper Engine 实时渲染的粒子特效（静态原画里没有），运行时用画布重绘。
 // 目前识别"下雨"：场景包里有 rain 粒子，且壁纸设置里的下雨开关没有关掉。
 function detectSceneEffects(dir) {
@@ -286,6 +316,24 @@ function generateJs() {
                         wp = weReader.getActiveWallpaper(userCfg.monitor, userCfg.workshopId);
                     }
                 } catch (e) {}
+            }
+            // 质量关卡：选中的壁纸如果只剩 Wallpaper Engine 自带的低清缩略图（视频没下载完、也没有场景原画），
+            // 铺满窗口只会是一片马赛克 —— 拒绝使用，继续保留上一张正常的壁纸。
+            const lastGoodFile = path.join(__dirname, 'last_good_wallpaper.json');
+            if (wp && !wp.videoPath && isLowResThumbnail(wp.mediaPath)) {
+                const reason = wp.videoMissing ? '视频文件还没下载完成（请在 Wallpaper Engine / Steam 里让它下载完整）' : '只有低清预览图，没有可用的高清原画';
+                console.warn(`[壁纸引擎] ⚠ "${wp.title}" ${reason}，本次不使用它。`);
+                let lastGood = null;
+                try { lastGood = JSON.parse(fs.readFileSync(lastGoodFile, 'utf8')); } catch (e) {}
+                const fallback = lastGood && lastGood.workshopId ? weReader.getWallpaperById(lastGood.workshopId) : null;
+                if (fallback && (fallback.videoPath || fallback.mediaPath)) {
+                    console.warn(`[壁纸引擎] 继续使用上一张正常的壁纸: "${fallback.title}"`);
+                    wp = fallback;
+                } else {
+                    console.warn(`[壁纸引擎] 没有可回退的壁纸记录，暂时使用低清预览图（主题照常加载）。`);
+                }
+            } else if (wp && userCfg.workshopId && (wp.videoPath || wp.mediaPath)) {
+                try { fs.writeFileSync(lastGoodFile, JSON.stringify({ workshopId: String(userCfg.workshopId), title: wp.title }, null, 2), 'utf8'); } catch (e) {}
             }
             const hasPoster = wp && wp.mediaPath && fs.existsSync(wp.mediaPath);
             if (hasPoster || (wp && wp.videoPath)) {
