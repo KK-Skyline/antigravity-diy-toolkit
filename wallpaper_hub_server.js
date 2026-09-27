@@ -178,27 +178,8 @@ function getBestPreviewFile(itemDir) {
     return null;
 }
 
-// 重启 Antigravity 客户端
-function restartAntigravityClient() {
-    try {
-        child_process.execSync('taskkill /F /IM Antigravity.exe', { windowsHide: true });
-    } catch(e) {}
-    setTimeout(() => {
-        const candidates = [
-            process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Programs', 'antigravity', 'Antigravity.exe') : null,
-            'C:\\Program Files\\Antigravity\\Antigravity.exe',
-            'D:\\Programs\\Antigravity\\Antigravity.exe',
-        ].filter(Boolean);
-        for (const exe of candidates) {
-            if (fs.existsSync(exe)) {
-                child_process.spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
-                break;
-            }
-        }
-    }, 800);
-}
-
 // HTTP 服务器
+let applyInFlight = false;
 const server = http.createServer((req, res) => {
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
     res.setHeader('X-Frame-Options', 'DENY');
@@ -273,6 +254,7 @@ const server = http.createServer((req, res) => {
     if (pathname === '/api/apply' && req.method === 'POST') {
         readJsonBody(req).then(data => {
             let validated = false;
+            let ownsApplyLock = false;
             try {
                 for (const [key, [min, max]] of Object.entries(NUMBER_RANGES)) {
                     if (data[key] !== undefined &&
@@ -289,6 +271,12 @@ const server = http.createServer((req, res) => {
                     throw new Error('Invalid workshopId');
                 }
                 validated = true;
+                if (applyInFlight) {
+                    sendJson(res, 409, { success: false, code: 'APPLY_BUSY', error: '已有应用任务正在执行。' });
+                    return;
+                }
+                applyInFlight = true;
+                ownsApplyLock = true;
                 const current = readConfig();
                 
                 current.workshopId = id;
@@ -306,20 +294,17 @@ const server = http.createServer((req, res) => {
                 // 执行注入打包引擎
                 const scriptPath = path.join(__dirname, 'localization_engine.js');
                 const args = [scriptPath, '--wallpaper'];
-                if (!data.autoRestart) args.push('--no-kill');
+                args.push(data.autoRestart ? '--close-app' : '--no-kill');
                 console.log('[Hub] 正在执行应用指令:', process.execPath, args);
                 
                 child_process.execFile(process.execPath, args, { cwd: __dirname, windowsHide: true, shell: false }, (err, stdout, stderr) => {
+                    applyInFlight = false;
                     if (err) {
                         console.error('[Hub] 应用壁纸失败:', stderr || err.message);
                         sendJson(res, 500, { success: false, code: 'APPLY_FAILED', error: '应用失败，请查看服务端日志。' });
                         return;
                     }
                     console.log('[Hub] 壁纸应用成功，输出:\n', stdout);
-                    
-                    if (data.autoRestart) {
-                        restartAntigravityClient();
-                    }
 
                     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
                     res.end(JSON.stringify({
@@ -329,6 +314,7 @@ const server = http.createServer((req, res) => {
                     }));
                 });
             } catch(e) {
+                if (ownsApplyLock) applyInFlight = false;
                 console.error('[Hub] 应用请求失败:', e);
                 sendJson(res, validated ? 500 : 400, validated
                     ? { success: false, code: 'APPLY_FAILED', error: '应用失败，请查看服务端日志。' }
@@ -628,8 +614,8 @@ function renderDashboardHtml() {
       <!-- 操作与选项 -->
       <div class="space-y-3 pt-2">
         <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer p-2.5 rounded-lg bg-[#141a29] border border-cardBorder">
-          <input id="chkAutoRestart" type="checkbox" checked class="w-4 h-4 rounded text-blue-600 accent-blue-500" />
-          <span>应用后自动重启 Antigravity 客户端（立即生效）</span>
+          <input id="chkAutoRestart" type="checkbox" class="w-4 h-4 rounded text-blue-600 accent-blue-500" />
+          <span>允许关闭并重启 Antigravity 客户端（立即生效）</span>
         </label>
 
         <button id="btnApply" data-action="apply" class="w-full py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-sm shadow-lg shadow-blue-500/25 transition-all flex items-center justify-center gap-2">

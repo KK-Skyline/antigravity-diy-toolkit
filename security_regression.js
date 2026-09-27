@@ -14,6 +14,7 @@ const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'antigravity-hub-test-'));
 const fixtureConfig = path.join(fixture, 'wallpaper_config.json');
 const calls = path.join(fixture, 'localizer.calls');
 const failFlag = path.join(fixture, 'localizer.fail');
+const waitFlag = path.join(fixture, 'localizer.wait');
 let server;
 let competingServer;
 
@@ -29,7 +30,8 @@ function prepareFixture() {
     fs.writeFileSync(path.join(fixture, 'wallpaper_engine_reader.js'), 'module.exports = {};\n');
     fs.writeFileSync(path.join(fixture, 'localization_engine.js'), [
         "const fs = require('fs');",
-        "fs.appendFileSync(process.env.HUB_STUB_CALLS, 'called\\n');",
+        "fs.appendFileSync(process.env.HUB_STUB_CALLS, JSON.stringify(process.argv.slice(2)) + '\\n');",
+        "if (fs.existsSync(process.env.HUB_STUB_WAIT)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 350);",
         "if (fs.existsSync(process.env.HUB_STUB_FAIL)) {",
         "    process.stderr.write('PRIVATE_LOCALIZER_DETAILS\\n');",
         "    process.exit(17);",
@@ -41,7 +43,7 @@ function prepareFixture() {
 function spawnHub() {
     const child = spawn(process.execPath, [path.join(fixture, 'wallpaper_hub_server.js')], {
         cwd: fixture, stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, HUB_STUB_CALLS: calls, HUB_STUB_FAIL: failFlag }
+        env: { ...process.env, HUB_STUB_CALLS: calls, HUB_STUB_FAIL: failFlag, HUB_STUB_WAIT: waitFlag }
     });
     child.output = { stdout: '', stderr: '' };
     child.stdout.on('data', chunk => { child.output.stdout += chunk; });
@@ -96,6 +98,7 @@ async function main() {
     assert.strictEqual(page.headers['x-frame-options'], 'DENY');
     assert.match(page.text, /src="\/hub\.js"/);
     assert.match(page.text, /href="\/hub\.css"/);
+    assert.doesNotMatch(page.text, /id="chkAutoRestart"[^>]*\bchecked\b/);
     assert.doesNotMatch(page.text, /cdn\.tailwindcss|<script>|\sonclick=|\soninput=|\sonerror=/);
     assert.strictEqual((await request('/hub.css')).status, 200);
     assert.strictEqual((await request('/hub.js')).status, 200);
@@ -138,7 +141,7 @@ async function main() {
     assert.strictEqual(fs.existsSync(calls), false, 'Invalid requests must not invoke the localizer');
 
     assert.strictEqual((await post('/api/apply', { workshopId: '123', autoRestart: false })).status, 200);
-    assert.strictEqual(fs.readFileSync(calls, 'utf8').trim(), 'called');
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(calls, 'utf8').trim()), ['--wallpaper', '--no-kill']);
     assert.strictEqual(JSON.parse(fs.readFileSync(fixtureConfig, 'utf8')).workshopId, '123');
 
     fs.writeFileSync(failFlag, '');
@@ -159,6 +162,22 @@ async function main() {
     assert.strictEqual(fs.readFileSync(calls, 'utf8').trim().split('\n').length, 2);
     fs.rmdirSync(fixtureConfig);
     fs.renameSync(fixtureConfig + '.saved', fixtureConfig);
+
+    fs.unlinkSync(failFlag);
+    fs.writeFileSync(waitFlag, '');
+    const firstApply = post('/api/apply', { workshopId: '123', autoRestart: true });
+    for (let attempt = 0; attempt < 100; attempt++) {
+        if (fs.readFileSync(calls, 'utf8').trim().split('\n').length === 3) break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.strictEqual(fs.readFileSync(calls, 'utf8').trim().split('\n').length, 3);
+    const busyApply = await post('/api/apply', { workshopId: '123', autoRestart: true });
+    assert.strictEqual(busyApply.status, 409);
+    assert.strictEqual(JSON.parse(busyApply.text).code, 'APPLY_BUSY');
+    assert.strictEqual((await firstApply).status, 200);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(calls, 'utf8').trim().split('\n').at(-1)),
+        ['--wallpaper', '--close-app']);
+    fs.unlinkSync(waitFlag);
 
     competingServer = spawnHub();
     const conflictingExit = await waitForExit(competingServer);

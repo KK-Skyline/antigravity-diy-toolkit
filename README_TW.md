@@ -4,9 +4,9 @@
 
 > **支援系統**：Windows & macOS (均已內建一鍵指令碼)  
 > **匹配版本**：Antigravity v2.12.2  
-> **核心引擎**：Node.js (無需安裝 Python，零依賴，極速極穩)  
+> **核心引擎**：Node.js >=22.12.0；首次使用前執行 `npm ci --omit=dev` 安裝鎖定依賴。壁紙處理的部分功能仍需 Python。
 > **中文化範圍**：包括軟體介面、頂部系統功能表、工作列右鍵選單、載入動畫、設定面板、新手引導及登入頁。  
-> **注入原理**：透過 ASAR 還原與打包，安全注入 `preload.js` 動態翻譯機制，絕不修改核心二進位檔案，一鍵安裝與完美還原。
+> **注入原理**：修改 `app.asar` 注入 `preload.js`；安裝前保留帶 SHA-256 校驗的版本化基線備份，恢復前會驗證備份。這不能證明備份的官方來源，也不能保證斷電或宿主更新後零風險。
 
 > [!WARNING]
 > **關於聊天歷史記錄/對話方塊內容被中文化的已知問題及匹配機制說明（開發者必讀）**：
@@ -95,33 +95,17 @@ node localization_engine.js --tw --brand-title translated
 
 ---
 
-## 🔌 可選進階功能：網路透明代理自動注入 (Windows 免 TUN 方案)
+## 🔌 代理自動注入已停用
 
-如果您處於網路受限環境（例如連線 Google AI / Gemini API 遇到限制），且不想開啟虛擬網卡/全域 TUN 模式，本專案現已支援在安裝中文化時**自動聯動注入 Windows 免 TUN 強制代理工具**。
-
-該代理方案基於開源專案 **[yuaotian/antigravity-proxy](https://github.com/yuaotian/antigravity-proxy)**（基於 MinHook 的 DLL 劫持透明代理）。
-
-### 使用方法：
-1. 前往 **[yuaotian/antigravity-proxy](https://github.com/yuaotian/antigravity-proxy)** 下載編譯好的檔案：
-   - `version.dll`
-   - `dbghelp.dll`
-   - `config.json`
-2. 在當前中文化專案根目錄新增 `proxy_config` 資料夾（該目錄已設定 `.gitignore` 本機排除，絕不會被 Git 提交污染）。
-3. 將下載的 `version.dll`、`dbghelp.dll` 及依您本機代理連接埠（如 `127.0.0.1:7890` / `18080`）編輯好的 `config.json` 放入 `proxy_config/` 目錄。
-4. 正常雙擊執行 **`双击安装繁体中文.bat`**：
-   - 中文化引擎將**自動偵測** `proxy_config/` 目錄。
-   - 一步自動完成 **“介面繁體中文化 + 代理模組注入”**，無需再在軟體更新後每次手動複製 DLL 檔案！
-5. **完全可選 & 零破壞**：
-   - 如果您沒有建立 `proxy_config/` 目錄或不需要代理，安裝過程與原先 100% 一致，僅進行純淨中文化。
-   - 執行 **`双击卸载还原官方英文.bat`** 時，同樣會自動清理代理檔案，還原為官方純淨狀態。
+舊版的 `proxy_config/` 自動複製與卸載刪除沒有檔案歸屬記錄，可能覆蓋或刪除宿主檔案。本版不會自動注入或清理 `version.dll`、`dbghelp.dll`、`config.json`。若舊版曾注入代理，請先核對來源與雜湊，再人工處理；不要直接刪除同名檔案。
 
 ---
 
 ## 🛠️ 中文化原理說明
 
 本引擎採用 **ASAR 包注入模式**，專為 **Antigravity 2.0+** 的 Electron 架構量身定制：
-1. **自動釋放鎖**：指令碼執行前會自動偵測並安全關閉 Antigravity 執行進程，防止檔案佔用鎖定。
-2. **安全備份**：首次執行時，會在軟體目錄自動建立原始 `app.asar.bak` 檔案，確保隨時可無損還原。
+1. **運行狀態檢查**：預設在 Antigravity 仍運行時停止；只有明確使用 `--close-app` 才嘗試關閉後操作。
+2. **版本化備份**：操作前保存帶 SHA-256 元資料的基線包，恢復後仍保留備份。舊版 `.bak` 只有在兩份舊備份一致且可解析時才會導入；這不保證官方來源。
 3. **精準注入**：
    - 注入 `preload.js`：採用 WeakSet 記錄與 Shadow DOM 穿透，啟動高效的 `MutationObserver` 引擎，動態監測並將渲染層文字翻譯為繁體中文。
    - 注入 `menu.js`：深度補丁系統級標題列選單。
@@ -184,9 +168,9 @@ node localization_engine.js --tw --brand-title translated
 
 ## 常見問題解答 (FAQ)
 
-### 1）提示「解包失敗」或缺少 npm 環境
-* **原因**：中文化引擎依賴 Node.js 進行 ASAR 包的解析。
-* **解決**：由於 Antigravity 本身就是一個基於 Node.js/Electron 的程式，您的電腦一般都已自帶環境。如果極少數情況下報錯，只需在電腦安裝 [Node.js](https://nodejs.org/)（LTS 版本即可）並重啟指令碼。
+### 1）提示缺少 Node.js 或 ASAR 依賴
+* **原因**：中文化引擎需要獨立安裝的 Node.js >=22.12.0 及倉庫鎖定的 `@electron/asar`。
+* **解決**：安裝符合版本的 Node.js，在專案目錄執行 `npm ci --omit=dev`；之後打包與還原不會在執行時下載依賴。
 
 ### 2）提示「權限不足」或 macOS 提示「無法開啟」
 * **解決**：
