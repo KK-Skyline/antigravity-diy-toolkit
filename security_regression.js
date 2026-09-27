@@ -38,16 +38,18 @@ function prepareFixture() {
         "const args = process.argv.slice(2);",
         "const configArg = args.indexOf('--hub-config');",
         "if (configArg < 0) throw new Error('Missing locked Hub config');",
+        "const invocation = JSON.stringify(args.filter((_, i) => i !== configArg && i !== configArg + 1)) + '\\n';",
+        "if (fs.existsSync(process.env.HUB_STUB_FAIL)) {",
+        "    fs.appendFileSync(process.env.HUB_STUB_CALLS, invocation);",
+        "    process.stderr.write('PRIVATE_LOCALIZER_DETAILS\\n');",
+        "    process.exit(17);",
+        "}",
         "const configFile = require('path').join(__dirname, 'wallpaper_config.json');",
         "const next = { ...JSON.parse(fs.readFileSync(configFile, 'utf8')), ...JSON.parse(args[configArg + 1]) };",
         "fs.writeFileSync(configFile, JSON.stringify(next, null, 2));",
-        "fs.appendFileSync(process.env.HUB_STUB_CALLS, JSON.stringify(args.filter((_, i) => i !== configArg && i !== configArg + 1)) + '\\n');",
+        "fs.appendFileSync(process.env.HUB_STUB_CALLS, invocation);",
         "fs.appendFileSync(process.env.HUB_STUB_APPLIED, JSON.stringify(next) + '\\n');",
-        "if (fs.existsSync(process.env.HUB_STUB_WAIT)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 350);",
-        "if (fs.existsSync(process.env.HUB_STUB_FAIL)) {",
-        "    process.stderr.write('PRIVATE_LOCALIZER_DETAILS\\n');",
-        "    process.exit(17);",
-        "}"
+        "if (fs.existsSync(process.env.HUB_STUB_WAIT)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 350);"
     ].join('\n'));
     fs.writeFileSync(fixtureConfig, '{}');
 }
@@ -160,13 +162,16 @@ async function main() {
     assert.strictEqual(JSON.parse(fs.readFileSync(appliedConfigs, 'utf8').trim()).opacity, 0.4);
 
     fs.writeFileSync(failFlag, '');
-    const failedApply = await post('/api/apply', { workshopId: '123', autoRestart: false });
+    const configBeforeFailure = fs.readFileSync(fixtureConfig);
+    const failedApply = await post('/api/apply', { workshopId: '123', opacity: 0.3, autoRestart: false });
     assert.strictEqual(failedApply.status, 500);
     assert.deepStrictEqual(JSON.parse(failedApply.text),
         { success: false, code: 'APPLY_FAILED', error: '应用失败，请查看服务端日志。' });
     assert.doesNotMatch(failedApply.text, /PRIVATE_LOCALIZER_DETAILS|details|stderr|localization_engine/);
     assert.match(server.output.stderr, /PRIVATE_LOCALIZER_DETAILS/);
+    assert.deepStrictEqual(fs.readFileSync(fixtureConfig), configBeforeFailure, 'Failed apply mutated config');
 
+    fs.unlinkSync(failFlag);
     fs.renameSync(fixtureConfig, fixtureConfig + '.saved');
     fs.mkdirSync(fixtureConfig);
     const failedWrite = await post('/api/apply', { workshopId: '123', autoRestart: false });
@@ -178,7 +183,6 @@ async function main() {
     fs.rmdirSync(fixtureConfig);
     fs.renameSync(fixtureConfig + '.saved', fixtureConfig);
 
-    fs.unlinkSync(failFlag);
     fs.writeFileSync(busyFlag, '');
     const configBeforeBusy = fs.readFileSync(fixtureConfig);
     const crossProcessBusy = await post('/api/apply', { workshopId: '123', opacity: 0.2, autoRestart: false });

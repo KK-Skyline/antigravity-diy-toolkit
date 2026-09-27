@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import * as asar from '@electron/asar';
+import { escape as escapeGlob } from 'minimatch';
 import * as tx from './asar_transaction.mjs';
 
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'antigravity-asar-test-'));
@@ -28,7 +29,7 @@ try {
     await asar.createPackageWithOptions(source, live, { unpackDir: '{native,node_modules/pkg}' });
     const originalHash = hash(live);
     assert.equal(tx.inspectArchive(live).unpacked.length, 2);
-    assert.equal(tx.asarUnpackGlob(tx.inspectArchive(live).unpacked), '{native,node_modules/pkg}');
+    assert.equal(tx.asarUnpackGlob(tx.inspectArchive(live).unpackedDirs), '{native,node_modules/pkg}');
 
     const release = tx.acquireLock(resources);
     assert.throws(() => tx.acquireLock(resources), /already running/);
@@ -72,12 +73,32 @@ try {
     fs.utimesSync(incompleteLock, old, old);
     tx.acquireLock(resources)();
 
-    const backup = tx.prepareBaseline(resources);
+    assert.throws(() => tx.prepareBaseline(resources), /explicit confirmation/);
+    assert.equal(fs.existsSync(path.join(resources, 'app.asar.baseline.json')), false);
+    const backup = tx.prepareBaseline(resources, { confirmUnverified: true });
     const backupHash = hash(backup);
     const baselineSidecarDigest = tx.inspectArchive(backup).unpackedSha256;
     assert.equal(backupHash, originalHash);
     assert.ok(fs.existsSync(`${backup}.json`));
     assert.ok(fs.existsSync(`${backup}.unpacked`));
+    assert.equal(JSON.parse(fs.readFileSync(`${backup}.json`, 'utf8')).source,
+        'user-confirmed-unverified-live');
+    assert.equal(JSON.parse(fs.readFileSync(path.join(resources, 'app.asar.baseline.json'))).userConfirmedUnverified, true);
+    fs.writeFileSync(path.join(resources, 'app.asar.baseline.json'), JSON.stringify({ sha256: backupHash }));
+    const unconfirmedPointer = fs.readFileSync(path.join(resources, 'app.asar.baseline.json'));
+    assert.throws(() => tx.prepareBaseline(resources), /explicit confirmation/);
+    assert.deepEqual(fs.readFileSync(path.join(resources, 'app.asar.baseline.json')), unconfirmedPointer);
+    assert.equal(tx.prepareBaseline(resources, { confirmUnverified: true }), backup);
+    const pointerBeforeTamper = fs.readFileSync(path.join(resources, 'app.asar.baseline.json'));
+    fs.writeFileSync(path.join(source, 'dist', 'main.js'), 'third-party edit');
+    const unsignedEdit = path.join(fixture, 'unsigned-edit.asar');
+    await asar.createPackageWithOptions(source, unsignedEdit, { unpackDir: '{native,node_modules/pkg}' });
+    fs.copyFileSync(unsignedEdit, live);
+    assert.throws(() => tx.prepareBaseline(resources), /does not match confirmed baseline/);
+    assert.deepEqual(fs.readFileSync(path.join(resources, 'app.asar.baseline.json')), pointerBeforeTamper);
+    tx.restore(resources);
+    assert.equal(hash(live), originalHash);
+    fs.writeFileSync(path.join(source, 'dist', 'main.js'), '/* main */');
 
     const extracted = path.join(fixture, 'extracted');
     fs.mkdirSync(extracted);
@@ -86,6 +107,18 @@ try {
     await tx.packAndReplace(resources, extracted, backup);
     assert.equal(tx.inspectArchive(live).localized, true);
     assert.equal(hash(backup), backupHash);
+    const legacy = path.join(fixture, 'legacy');
+    fs.mkdirSync(legacy);
+    fs.copyFileSync(live, path.join(legacy, 'app.asar'));
+    fs.cpSync(`${live}.unpacked`, path.join(legacy, 'app.asar.unpacked'), { recursive: true });
+    fs.copyFileSync(backup, path.join(legacy, 'app.asar.bak'));
+    fs.copyFileSync(backup, path.join(legacy, 'app.asar.official_backup'));
+    assert.throws(() => tx.prepareBaseline(legacy), /explicit confirmation/);
+    assert.equal(fs.existsSync(path.join(legacy, 'app.asar.baseline.json')), false);
+    const importedLegacy = tx.prepareBaseline(legacy, { confirmUnverified: true });
+    assert.equal(hash(importedLegacy), backupHash);
+    assert.equal(JSON.parse(fs.readFileSync(`${importedLegacy}.json`, 'utf8')).source,
+        'user-confirmed-unverified-legacy-pair');
 
     const badExtract = path.join(fixture, 'bad-extracted');
     fs.cpSync(extracted, badExtract, { recursive: true });
@@ -166,7 +199,7 @@ try {
         APPDATA: path.join(safeHome, 'AppData', 'Roaming'), XDG_CONFIG_HOME: path.join(safeHome, '.config') };
     const homedir = spawnSync(process.execPath, ['-e', "process.stdout.write(require('os').homedir())"], { env, encoding: 'utf8' });
     assert.equal(homedir.stdout, safeHome);
-    const installRun = spawnSync(process.execPath, [enginePath, '--install-dir', integration], { env, encoding: 'utf8' });
+    const installRun = spawnSync(process.execPath, [enginePath, '--confirm-unverified-baseline', '--install-dir', integration], { env, encoding: 'utf8' });
     assert.equal(installRun.status, 0, installRun.stderr);
     assert.equal(tx.inspectArchive(integrationLive).localized, true);
     const localizedHash = hash(integrationLive);
@@ -208,6 +241,30 @@ try {
     const preservedRollbacks = fs.readdirSync(integrationResources).filter(name => name.startsWith('app.asar.rollback.rescue-'));
     assert.equal(preservedRollbacks.length, 1);
     assert.equal(hash(path.join(integrationResources, preservedRollbacks[0])), originalHash);
+    if (process.platform !== 'win32') {
+        const isolatedEngine = path.join(fixture, 'isolated-engine');
+        const isolatedInstall = path.join(fixture, 'isolated-install');
+        const isolatedResources = path.join(isolatedInstall, 'resources');
+        fs.mkdirSync(isolatedEngine);
+        fs.mkdirSync(isolatedResources, { recursive: true });
+        for (const name of ['localization_engine.js', 'asar_transaction.mjs', 'theme-acrylic.css']) {
+            fs.copyFileSync(new URL(name, import.meta.url), path.join(isolatedEngine, name));
+        }
+        fs.cpSync(new URL('./dicts/', import.meta.url), path.join(isolatedEngine, 'dicts'), { recursive: true });
+        fs.symlinkSync(path.join(path.dirname(enginePath), 'node_modules'), path.join(isolatedEngine, 'node_modules'), 'dir');
+        fs.writeFileSync(path.join(isolatedEngine, 'wallpaper_engine_reader.js'),
+            'module.exports = { getActiveWallpaper: () => null };\n');
+        const isolatedConfig = path.join(isolatedEngine, 'wallpaper_config.json');
+        fs.writeFileSync(isolatedConfig, JSON.stringify({ workshopId: '123', opacity: 0.4 }));
+        fs.copyFileSync(live, path.join(isolatedResources, 'app.asar'));
+        fs.cpSync(`${live}.unpacked`, path.join(isolatedResources, 'app.asar.unpacked'), { recursive: true });
+        const hubRun = spawnSync(process.execPath, [path.join(isolatedEngine, 'localization_engine.js'),
+            '--wallpaper', '--hub-config', JSON.stringify({ workshopId: '123', opacity: 0.2 }),
+            '--confirm-unverified-baseline', '--install-dir', isolatedInstall], { env, encoding: 'utf8' });
+        assert.equal(hubRun.status, 0, hubRun.stderr);
+        assert.equal(JSON.parse(fs.readFileSync(isolatedConfig)).opacity, 0.2);
+        assert.equal(tx.inspectArchive(path.join(isolatedResources, 'app.asar')).localized, true);
+    }
     }
 
     const liveSidecar = `${live}.unpacked`;
@@ -287,9 +344,115 @@ try {
     fs.writeFileSync(path.join(packedOnlySource, 'dist', 'preload.js'), 'x'.repeat(2048));
     await asar.createPackage(packedOnlySource, path.join(packedOnlyResources, 'app.asar'));
     const packedOnlyHash = hash(path.join(packedOnlyResources, 'app.asar'));
-    tx.prepareBaseline(packedOnlyResources);
+    tx.prepareBaseline(packedOnlyResources, { confirmUnverified: true });
     tx.restore(packedOnlyResources);
     assert.equal(hash(path.join(packedOnlyResources, 'app.asar')), packedOnlyHash);
+    const mixed = path.join(fixture, 'mixed-unpack');
+    const mixedSource = path.join(mixed, 'source');
+    const mixedResources = path.join(mixed, 'resources');
+    const mixedLive = path.join(mixedResources, 'app.asar');
+    fs.mkdirSync(path.join(mixedSource, 'dist'), { recursive: true });
+    fs.mkdirSync(path.join(mixedSource, 'node_modules', 'native-pkg'), { recursive: true });
+    fs.mkdirSync(path.join(mixedSource, 'assets'), { recursive: true });
+    fs.mkdirSync(path.join(mixedSource, 'native2'), { recursive: true });
+    fs.mkdirSync(path.join(mixedSource, 'weird[dir],x'), { recursive: true });
+    fs.mkdirSync(mixedResources);
+    fs.writeFileSync(path.join(mixedSource, 'package.json'), JSON.stringify({ version: '2.17.0' }));
+    fs.writeFileSync(path.join(mixedSource, 'dist', 'preload.js'), 'x'.repeat(2048));
+    fs.writeFileSync(path.join(mixedSource, 'node_modules', 'native-pkg', 'addon.node'), 'native bytes');
+    fs.writeFileSync(path.join(mixedSource, 'node_modules', 'native-pkg', 'index.js'), 'packed sibling');
+    fs.writeFileSync(path.join(mixedSource, 'assets', '[literal],file.node'), 'special name');
+    fs.writeFileSync(path.join(mixedSource, 'assets', 'packed.js'), 'packed asset');
+    fs.writeFileSync(path.join(mixedSource, 'native2', 'addon.bin'), 'whole directory');
+    fs.writeFileSync(path.join(mixedSource, 'weird[dir],x', 'addon.bin'), 'special directory');
+    const mixedUnpackPattern = ['node_modules/native-pkg/addon.node', 'assets/[literal],file.node']
+        .map(name => escapeGlob(path.join(mixedSource, name).replaceAll('\\', '/')).replaceAll(',', '\\,'));
+    await asar.createPackageWithOptions(mixedSource, mixedLive,
+        { unpackDir: `{native2,${escapeGlob('weird[dir],x').replaceAll(',', '\\,')}}`,
+            unpack: `{${mixedUnpackPattern.join(',')}}` });
+    const mixedOriginal = tx.inspectArchive(mixedLive);
+    assert.deepEqual(mixedOriginal.unpacked,
+        ['assets/[literal],file.node', 'native2/addon.bin', 'node_modules/native-pkg/addon.node',
+            'weird[dir],x/addon.bin']);
+    assert.deepEqual(mixedOriginal.unpackedDirs, ['native2', 'weird[dir],x']);
+    const mixedBackup = tx.prepareBaseline(mixedResources, { confirmUnverified: true });
+    const mixedExtracted = path.join(mixed, 'extracted');
+    fs.mkdirSync(mixedExtracted);
+    tx.extractBaseline(mixedBackup, mixedExtracted);
+    fs.appendFileSync(path.join(mixedExtracted, 'dist', 'preload.js'), `\n${signature}\n`);
+    const mixedConfig = path.join(mixed, 'wallpaper_config.json');
+    fs.writeFileSync(mixedConfig, JSON.stringify({ workshopId: '123', opacity: 0.4 }));
+    const mixedConfigPlan = opacity => ({ file: mixedConfig, value: { workshopId: '123', opacity } });
+    await tx.packAndReplace(mixedResources, mixedExtracted, mixedBackup, mixedConfigPlan(0.2));
+    assert.deepEqual(tx.inspectArchive(mixedLive).unpacked, mixedOriginal.unpacked);
+    assert.deepEqual(tx.inspectArchive(mixedLive).unpackedDirs, mixedOriginal.unpackedDirs);
+    assert.equal(tx.inspectArchive(mixedLive).unpackedSha256, mixedOriginal.unpackedSha256);
+    assert.equal(JSON.parse(fs.readFileSync(mixedConfig)).opacity, 0.2);
+    const committedMixedHash = hash(mixedLive);
+    const committedConfig = fs.readFileSync(mixedConfig);
+    const brokenMixed = path.join(mixed, 'broken');
+    fs.cpSync(mixedExtracted, brokenMixed, { recursive: true });
+    fs.unlinkSync(path.join(brokenMixed, 'dist', 'preload.js'));
+    await assert.rejects(tx.packAndReplace(mixedResources, brokenMixed, mixedBackup, mixedConfigPlan(0.3)));
+    assert.equal(hash(mixedLive), committedMixedHash);
+    assert.deepEqual(fs.readFileSync(mixedConfig), committedConfig);
+    const renameMixed = fs.renameSync;
+    fs.renameSync = (from, to) => {
+        if (from.startsWith(path.join(mixedResources, 'app.asar.new-')) && to === mixedLive) {
+            throw new Error('simulated ASAR commit failure');
+        }
+        return renameMixed(from, to);
+    };
+    try {
+        await assert.rejects(tx.packAndReplace(mixedResources, mixedExtracted, mixedBackup, mixedConfigPlan(0.3)),
+            /simulated ASAR commit failure/);
+    } finally { fs.renameSync = renameMixed; }
+    assert.equal(hash(mixedLive), committedMixedHash);
+    assert.deepEqual(fs.readFileSync(mixedConfig), committedConfig);
+    fs.renameSync = (from, to) => {
+        if (to === mixedConfig && from.includes('.new-')) throw new Error('simulated config commit failure');
+        return renameMixed(from, to);
+    };
+    try {
+        await assert.rejects(tx.packAndReplace(mixedResources, mixedExtracted, mixedBackup, mixedConfigPlan(0.3)),
+            /simulated config commit failure/);
+    } finally { fs.renameSync = renameMixed; }
+    assert.equal(hash(mixedLive), committedMixedHash);
+    assert.deepEqual(fs.readFileSync(mixedConfig), committedConfig);
+    fs.renameSync = (from, to) => {
+        const result = renameMixed(from, to);
+        if (to === mixedConfig && from.includes('.new-')) throw new Error('simulated crash after config rename');
+        return result;
+    };
+    try {
+        await assert.rejects(tx.packAndReplace(mixedResources, mixedExtracted, mixedBackup, mixedConfigPlan(0.3)),
+            /simulated crash after config rename/);
+    } finally { fs.renameSync = renameMixed; }
+    assert.equal(hash(mixedLive), committedMixedHash);
+    assert.deepEqual(fs.readFileSync(mixedConfig), committedConfig);
+    if (process.platform !== 'win32') {
+        const configCrash = spawnSync(process.execPath, ['--input-type=module', '-e',
+            `import fs from 'node:fs'; import { packAndReplace } from ${JSON.stringify(new URL('./asar_transaction.mjs', import.meta.url).href)}; const rename=fs.renameSync; fs.renameSync=(from,to)=>{ const result=rename(from,to); if(to===${JSON.stringify(mixedConfig)} && from.includes('.new-')) process.kill(process.pid,'SIGKILL'); return result; }; await packAndReplace(${JSON.stringify(mixedResources)},${JSON.stringify(mixedExtracted)},${JSON.stringify(mixedBackup)},${JSON.stringify(mixedConfigPlan(0.3))});`],
+            { encoding: 'utf8' });
+        assert.equal(configCrash.signal, 'SIGKILL', configCrash.stderr);
+        assert.ok(fs.existsSync(path.join(mixedResources, 'app.asar.config.pending')));
+        assert.throws(() => tx.restore(mixedResources), /Unresolved ASAR config transaction/);
+        tx.recover(mixedResources, { configFile: mixedConfig });
+        assert.equal(hash(mixedLive), committedMixedHash);
+        assert.deepEqual(fs.readFileSync(mixedConfig), committedConfig);
+    }
+    fs.unlinkSync(mixedConfig);
+    fs.renameSync = (from, to) => {
+        const result = renameMixed(from, to);
+        if (to === mixedConfig && from.includes('.new-')) throw new Error('simulated missing-config commit crash');
+        return result;
+    };
+    try {
+        await assert.rejects(tx.packAndReplace(mixedResources, mixedExtracted, mixedBackup, mixedConfigPlan(0.5)),
+            /simulated missing-config commit crash/);
+    } finally { fs.renameSync = renameMixed; }
+    assert.equal(fs.existsSync(mixedConfig), false);
+    assert.equal(hash(mixedLive), committedMixedHash);
     for (const script of ['一键彻底还原官方英文(保底防炸).bat', '一键彻底还原官方英文(保底防炸).ps1']) {
         const content = fs.readFileSync(new URL(script, import.meta.url), 'utf8');
         assert.match(content, /localization_engine\.js/);
@@ -298,7 +461,23 @@ try {
     }
     const engine = fs.readFileSync(new URL('./localization_engine.js', import.meta.url), 'utf8');
     assert.doesNotMatch(engine, /proxy_config|injectProxyIfNeeded|restoreProxyIfNeeded/);
-    console.log('asar transaction regression: PASS (dead guard, busy exit 75, portable unpack glob, sidecar rescue, crash rollback, tamper)');
+    assert.match(engine, /execFileSync\('open', \[installDir\], \{ stdio: 'ignore', shell: false \}\)/);
+    assert.doesNotMatch(engine, /child_process\.exec\(`open/);
+    if (process.platform !== 'win32') {
+        const fakeBin = path.join(fixture, 'fake-bin');
+        const captured = path.join(fixture, 'open-argv');
+        const marker = path.join(fixture, 'injected-marker');
+        fs.mkdirSync(fakeBin);
+        fs.writeFileSync(path.join(fakeBin, 'open'), '#!/bin/sh\nprintf "%s" "$1" > "$CAPTURE_FILE"\n', { mode: 0o755 });
+        const specialDir = path.join(fixture, 'app$(touch injected-marker)');
+        fs.mkdirSync(specialDir);
+        const openRun = spawnSync('open', [specialDir], { cwd: fixture, env: { ...process.env, PATH: fakeBin,
+            CAPTURE_FILE: captured }, shell: false });
+        assert.equal(openRun.status, 0, openRun.error?.message);
+        assert.equal(fs.readFileSync(captured, 'utf8'), specialDir);
+        assert.equal(fs.existsSync(marker), false);
+    }
+    console.log('asar transaction regression: PASS (baseline trust, selective unpack, config commit/recovery, dead guard, busy 75, sidecar rescue)');
 } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
 }

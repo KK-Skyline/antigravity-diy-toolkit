@@ -2,12 +2,15 @@ import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import * as asar from '@electron/asar';
+import { escape as escapeGlob } from 'minimatch';
+const literalGlob = name => escapeGlob(name).replaceAll(',', '\\,');
 
 const SIGNATURE = '/* --- ANTIGRAVITY CHINESE LOCALIZATION START --- */';
 const SHA = /^[a-f0-9]{64}$/;
 const livePath = dir => path.join(dir, 'app.asar');
 const pointerPath = dir => path.join(dir, 'app.asar.baseline.json');
 const restoreMarkerPath = dir => path.join(dir, 'app.asar.restore.pending');
+const configMarkerPath = dir => path.join(dir, 'app.asar.config.pending');
 const backupPath = (dir, sha) => path.join(dir, `app.asar.baseline-${sha}.bak`);
 const hashFile = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const unique = () => `${process.pid}-${crypto.randomUUID()}`;
@@ -74,6 +77,9 @@ export function inspectArchive(file, sidecar = `${file}.unpacked`) {
     asar.uncache(file);
     const entries = asar.listPackage(file, { isPack: true }).map(entry => entry.replaceAll('\\', '/'));
     if (!entries.some(entry => entry.endsWith(' : /dist/preload.js'))) throw new Error(`ASAR missing preload: ${file}`);
+    const unpackedDirs = entries.filter(entry => entry.startsWith('unpack : '))
+        .map(entry => entry.slice('unpack : /'.length))
+        .filter(name => 'files' in asar.statFile(file, name.split('/').join(path.sep))).sort();
     const unpacked = entries.filter(entry => entry.startsWith('unpack : '))
         .map(entry => entry.slice('unpack : /'.length))
         .filter(name => !('files' in asar.statFile(file, name.split('/').join(path.sep)))).sort();
@@ -105,6 +111,7 @@ export function inspectArchive(file, sidecar = `${file}.unpacked`) {
         version: pkg.version,
         localized: preload.includes(SIGNATURE),
         unpacked,
+        unpackedDirs,
         unpackedSha256
     };
 }
@@ -247,11 +254,12 @@ function saveBaseline(dir, source, sidecar, label) {
         unpackedSha256: info.unpackedSha256, source: label
     });
     verifyBaseline(dir, sha);
-    writeJson(pointerPath(dir), { sha256: sha });
+    writeJson(pointerPath(dir), { sha256: sha, userConfirmedUnverified: true });
     return target;
 }
 
-function importLegacy(dir, version) {
+function importLegacy(dir, version, confirmUnverified) {
+    if (!confirmUnverified) throw new Error('Legacy ASAR backups require explicit confirmation of unverified provenance');
     const first = path.join(dir, 'app.asar.bak');
     const second = path.join(dir, 'app.asar.official_backup');
     if (!fs.existsSync(first) || !fs.existsSync(second) || hashFile(first) !== hashFile(second)) {
@@ -259,25 +267,89 @@ function importLegacy(dir, version) {
     }
     const info = inspectArchive(first, `${livePath(dir)}.unpacked`);
     if (info.localized || (version && info.version !== version)) throw new Error('Legacy baseline does not match installed app');
-    console.warn('[备份] 导入两份一致的旧备份；其官方来源仍需由用户确认。');
-    return saveBaseline(dir, first, `${livePath(dir)}.unpacked`, 'matching-legacy-pair');
+    console.warn('[备份] 用户已确认导入两份一致的旧备份；工具未验证其官方来源。');
+    return saveBaseline(dir, first, `${livePath(dir)}.unpacked`, 'user-confirmed-unverified-legacy-pair');
 }
 
-export function prepareBaseline(dir) {
+export function prepareBaseline(dir, { confirmUnverified = false } = {}) {
+    if (fs.existsSync(configMarkerPath(dir))) throw new Error('Unresolved ASAR config transaction exists');
     const live = livePath(dir);
     const info = inspectArchive(live);
-    if (!info.localized) return saveBaseline(dir, live, `${live}.unpacked`, 'unlocalized-live');
     const pointer = pointerPath(dir);
-    if (!fs.existsSync(pointer)) return importLegacy(dir, info.version);
-    const { sha256 } = JSON.parse(fs.readFileSync(pointer, 'utf8'));
+    if (!fs.existsSync(pointer)) {
+        if (!confirmUnverified) throw new Error('New ASAR baseline requires explicit confirmation of unverified provenance');
+        return info.localized ? importLegacy(dir, info.version, true) :
+            saveBaseline(dir, live, `${live}.unpacked`, 'user-confirmed-unverified-live');
+    }
+    const { sha256, userConfirmedUnverified } = JSON.parse(fs.readFileSync(pointer, 'utf8'));
     const baseline = verifyBaseline(dir, sha256);
+    if (userConfirmedUnverified !== true) {
+        if (!confirmUnverified) throw new Error('Existing ASAR baseline requires explicit confirmation of unverified provenance');
+        writeJson(pointer, { sha256, userConfirmedUnverified: true });
+    }
+    if (!info.localized) {
+        if (hashFile(live) === sha256 && info.unpackedSha256 === baseline.info.unpackedSha256) return baseline.file;
+        if (!confirmUnverified) throw new Error('Unlocalized ASAR does not match confirmed baseline; explicit confirmation required');
+        return saveBaseline(dir, live, `${live}.unpacked`, 'user-confirmed-unverified-live');
+    }
     if (baseline.info.version !== info.version || baseline.info.unpackedSha256 !== info.unpackedSha256) {
         throw new Error('Installed ASAR differs from verified baseline version/sidecar');
     }
     return baseline.file;
 }
 
-export function recover(dir, { rescueSidecar = false } = {}) {
+function recoverPendingConfig(dir, configFile) {
+    const markerFile = configMarkerPath(dir);
+    if (!fs.existsSync(markerFile)) return;
+    const marker = JSON.parse(fs.readFileSync(markerFile, 'utf8'));
+    if (marker.mode !== 'config' || !configFile || marker.file !== path.resolve(configFile) ||
+        typeof marker.hadConfig !== 'boolean' || typeof marker.original !== 'string' ||
+        typeof marker.originalSha256 !== 'string' ||
+        !/^wallpaper_config\.json\.new-[0-9a-f-]+$/.test(marker.stage)) {
+        throw new Error('Invalid ASAR config marker; manual review required');
+    }
+    const original = Buffer.from(marker.original, 'base64');
+    if (crypto.createHash('sha256').update(original).digest('hex') !== marker.originalSha256) {
+        throw new Error('ASAR config rollback hash mismatch');
+    }
+    const live = livePath(dir);
+    const rollback = `${live}.rollback`;
+    let discarded = null;
+    if (fs.existsSync(rollback)) {
+        if (fs.existsSync(live)) {
+            discarded = `${live}.failed-${unique()}`;
+            fs.renameSync(live, discarded);
+        }
+        fs.renameSync(rollback, live);
+        syncDir(dir);
+        inspectArchive(live);
+    } else {
+        inspectArchive(live);
+    }
+    const target = path.resolve(configFile);
+    if (marker.hadConfig) {
+        const stagedRestore = `${target}.restore-${unique()}`;
+        try {
+            fs.writeFileSync(stagedRestore, original, { flag: 'wx' });
+            syncFile(stagedRestore);
+            fs.renameSync(stagedRestore, target);
+            syncDir(path.dirname(target));
+        } finally {
+            if (fs.existsSync(stagedRestore)) fs.unlinkSync(stagedRestore);
+        }
+    } else if (fs.existsSync(target)) {
+        fs.unlinkSync(target);
+        syncDir(path.dirname(target));
+    }
+    const stage = path.join(path.dirname(target), marker.stage);
+    if (fs.existsSync(stage)) fs.unlinkSync(stage);
+    fs.unlinkSync(markerFile);
+    syncDir(dir);
+    if (discarded) fs.unlinkSync(discarded);
+}
+
+export function recover(dir, { rescueSidecar = false, configFile = null } = {}) {
+    recoverPendingConfig(dir, configFile);
     if (fs.existsSync(restoreMarkerPath(dir))) recoverPendingRestore(dir);
     const live = livePath(dir);
     const rollback = `${live}.rollback`;
@@ -389,12 +461,13 @@ function recoverPendingRestore(dir) {
     for (const failed of discarded) fs.rmSync(failed, { recursive: true });
 }
 
-function replace(dir, next) {
+function replace(dir, next, keepRollback = false) {
     const live = livePath(dir);
     const rollback = `${live}.rollback`;
     inspectArchive(next, `${live}.unpacked`);
     if (fs.existsSync(rollback)) throw new Error('Unresolved ASAR rollback exists');
     if (!fs.existsSync(live)) {
+        if (keepRollback) throw new Error('Cannot commit ASAR/config pair without a live rollback source');
         fs.renameSync(next, live);
         syncDir(dir);
         inspectArchive(live);
@@ -412,28 +485,40 @@ function replace(dir, next) {
         syncDir(dir);
         throw error;
     }
-    try { fs.unlinkSync(rollback); syncDir(dir); }
-    catch (error) { console.warn(`[ASAR] 新包已验证，但旧包清理失败: ${error.message}`); }
+    if (!keepRollback) {
+        try { fs.unlinkSync(rollback); syncDir(dir); }
+        catch (error) { console.warn(`[ASAR] 新包已验证，但旧包清理失败: ${error.message}`); }
+    }
 }
 
 export function extractBaseline(file, dest) { asar.extractAll(file, dest); }
 
-export function asarUnpackGlob(unpacked) {
-    const dirs = [...new Set(unpacked.map(name => name.startsWith('node_modules/')
-        ? name.split('/').slice(0, 2).join('/') : path.posix.dirname(name)))];
-    if (dirs.some(name => name === '.' || /[{}*?\[\],]/.test(name))) throw new Error('Unsupported unpacked layout');
-    return dirs.length === 1 ? dirs[0] : `{${dirs.join(',')}}`;
+export function asarUnpackGlob(dirs) {
+    const patterns = [...new Set(dirs)].map(literalGlob);
+    return patterns.length === 1 ? patterns[0] : patterns.length ? `{${patterns.join(',')}}` : undefined;
 }
 
-export async function packAndReplace(dir, extracted, baseline) {
+function asarUnpackFilesGlob(files, extracted) {
+    const patterns = files.map(name => literalGlob(path.join(extracted, name).replaceAll('\\', '/')));
+    return patterns.length === 1 ? patterns[0] : patterns.length ? `{${patterns.join(',')}}` : undefined;
+}
+
+export async function packAndReplace(dir, extracted, baseline, config = null) {
     const original = inspectArchive(baseline);
     const next = path.join(dir, `app.asar.new-${unique()}`);
+    let configStage = null;
+    const configFile = config ? path.resolve(config.file) : null;
     try {
-        await asar.createPackageWithOptions(extracted, next,
-            original.unpacked.length ? { unpackDir: asarUnpackGlob(original.unpacked) } : {});
+        const leafFiles = original.unpacked.filter(name =>
+            !original.unpackedDirs.some(dirName => name.startsWith(`${dirName}/`)));
+        await asar.createPackageWithOptions(extracted, next, {
+            unpackDir: asarUnpackGlob(original.unpackedDirs),
+            unpack: asarUnpackFilesGlob(leafFiles, extracted)
+        });
         const packed = inspectArchive(next);
         if (packed.version !== original.version || !packed.localized ||
             packed.unpacked.join('\0') !== original.unpacked.join('\0') ||
+            packed.unpackedDirs.join('\0') !== original.unpackedDirs.join('\0') ||
             packed.unpackedSha256 !== original.unpackedSha256) {
             throw new Error('Repacked ASAR layout/version differs from baseline');
         }
@@ -442,18 +527,50 @@ export async function packAndReplace(dir, extracted, baseline) {
         }
         if (fs.existsSync(`${next}.unpacked`)) fs.rmSync(`${next}.unpacked`, { recursive: true });
         syncFile(next);
-        replace(dir, next);
+        let markerWritten = false;
+        if (config) {
+            if (fs.existsSync(configMarkerPath(dir))) throw new Error('Unresolved ASAR config transaction exists');
+            const originalConfig = fs.existsSync(configFile) ? fs.readFileSync(configFile) : null;
+            configStage = `${configFile}.new-${unique()}`;
+            fs.writeFileSync(configStage, JSON.stringify(config.value, null, 2), { flag: 'wx' });
+            syncFile(configStage);
+            syncDir(path.dirname(configFile));
+            writeJson(configMarkerPath(dir), { mode: 'config', file: configFile,
+                hadConfig: originalConfig !== null, original: originalConfig?.toString('base64') || '',
+                originalSha256: crypto.createHash('sha256').update(originalConfig || Buffer.alloc(0)).digest('hex'),
+                stage: path.basename(configStage) });
+            markerWritten = true;
+        }
+        try {
+            replace(dir, next, !!config);
+            if (config) {
+                fs.renameSync(configStage, configFile);
+                syncDir(path.dirname(configFile));
+                fs.unlinkSync(configMarkerPath(dir));
+                syncDir(dir);
+                try { fs.unlinkSync(`${livePath(dir)}.rollback`); syncDir(dir); }
+                catch (error) { console.warn(`[ASAR] 已提交配置与新包，旧包清理失败: ${error.message}`); }
+            }
+        } catch (error) {
+            if (markerWritten) {
+                try { recoverPendingConfig(dir, configFile); }
+                catch (rollbackError) { throw new AggregateError([error, rollbackError], 'ASAR/config rollback failed'); }
+            }
+            throw error;
+        }
     } finally {
         if (fs.existsSync(next)) fs.unlinkSync(next);
         if (fs.existsSync(`${next}.unpacked`)) fs.rmSync(`${next}.unpacked`, { recursive: true });
+        if (configStage && fs.existsSync(configStage)) fs.unlinkSync(configStage);
     }
 }
 
-export function restore(dir) {
+export function restore(dir, { confirmUnverified = false } = {}) {
+    if (fs.existsSync(configMarkerPath(dir))) throw new Error('Unresolved ASAR config transaction exists');
     if (fs.existsSync(restoreMarkerPath(dir))) recoverPendingRestore(dir);
     if (fs.existsSync(`${livePath(dir)}.rollback`)) recover(dir, { rescueSidecar: true });
     const pointer = pointerPath(dir);
-    if (!fs.existsSync(pointer)) importLegacy(dir, null);
+    if (!fs.existsSync(pointer)) importLegacy(dir, null, confirmUnverified);
     const { sha256 } = JSON.parse(fs.readFileSync(pointer, 'utf8'));
     const baseline = verifyBaseline(dir, sha256);
     const live = livePath(dir);

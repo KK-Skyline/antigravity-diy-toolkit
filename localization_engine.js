@@ -272,7 +272,7 @@ function detectSceneEffects(dir) {
     return effects;
 }
 
-function generateJs() {
+function generateJs(configOverride = null) {
     const fullDict = loadDictionary();
     const longEntries = Object.entries(fullDict).sort((a, b) => b[0].length - a[0].length);
     
@@ -299,6 +299,7 @@ function generateJs() {
             if (fs.existsSync(cfgFile)) {
                 try { Object.assign(userCfg, JSON.parse(fs.readFileSync(cfgFile, 'utf8'))); } catch(e) {}
             }
+            if (configOverride) Object.assign(userCfg, configOverride);
             if (!/^\d{1,20}$/.test(String(userCfg.workshopId))) throw new Error('Invalid workshopId');
             const weReader = require('./wallpaper_engine_reader');
             let wp = weReader.getActiveWallpaper(userCfg.monitor, userCfg.workshopId);
@@ -1408,13 +1409,13 @@ function ensureWritePermission(targetDir) {
 // ==========================================
 // Antigravity 2.0 汉化引擎 (ASAR打包注入模式)
 // ==========================================
-async function install20(resourcesDir, transaction) {
+async function install20(resourcesDir, transaction, confirmUnverified, configPlan) {
     const asarPath = path.join(resourcesDir, "app.asar");
     if (!fs.existsSync(asarPath)) {
         console.error(`[错误] 未在资源目录中找到 app.asar: ${resourcesDir}`);
         return false;
     }
-    const baseline = transaction.prepareBaseline(resourcesDir);
+    const baseline = transaction.prepareBaseline(resourcesDir, { confirmUnverified });
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'antigravity-asar-'));
     try {
         transaction.extractBaseline(baseline, tempDir);
@@ -1431,7 +1432,7 @@ async function install20(resourcesDir, transaction) {
 
     // 清理已有的汉化，重新注入
     const cleanedContent = cleanJsContent(content);
-    const translationJs = generateJs();
+    const translationJs = generateJs(configPlan?.value);
     const newContent = cleanedContent + "\n" + translationJs;
 
     fs.writeFileSync(preloadPath, newContent, 'utf-8');
@@ -1692,7 +1693,7 @@ async function install20(resourcesDir, transaction) {
 
     // 4. 重新打包
     console.log(`[打包] 正在将修改后的内容打包回 app.asar...`);
-    await transaction.packAndReplace(resourcesDir, tempDir, baseline);
+    await transaction.packAndReplace(resourcesDir, tempDir, baseline, configPlan);
 
     cleanElectronCache();
     resignAppOnMac(resourcesDir);
@@ -1703,10 +1704,10 @@ async function install20(resourcesDir, transaction) {
     }
 }
 
-function restore20(resourcesDir, transaction) {
-    console.log("[还原] 正在用官方备份文件恢复...");
+function restore20(resourcesDir, transaction, confirmUnverified) {
+    console.log("[还原] 正在用已保存的基线备份恢复...");
     try {
-        transaction.restore(resourcesDir);
+        transaction.restore(resourcesDir, { confirmUnverified });
     } catch (e) {
         console.error(`[错误] 恢复备份失败: ${e.message}`);
         if (process.platform === 'darwin' && e.code === 'EPERM') {
@@ -1715,7 +1716,7 @@ function restore20(resourcesDir, transaction) {
         return false;
     }
     resignAppOnMac(resourcesDir);
-    console.log("[√] 官方 app.asar 已成功恢复！");
+    console.log("[√] 已保存的基线 app.asar 已成功恢复！");
     return true;
 }
 
@@ -1839,6 +1840,7 @@ async function main() {
     let manualDir = "";
     let noKill = true; // 默认不主动杀死客户端，防止中断用户当前的智能体配对会话
     let hubConfig = null;
+    let confirmUnverified = false;
 
     const args = process.argv.slice(2);
     for (let i = 0; i < args.length; i++) {
@@ -1853,6 +1855,8 @@ async function main() {
             noKill = false;
         } else if (args[i] === '--brand-title') {
             i++;
+        } else if (args[i] === '--confirm-unverified-baseline') {
+            confirmUnverified = true;
         } else if (args[i] === '--hub-config') {
             if (hubConfig || !args[i + 1] || args[i + 1].length > 2048) throw new Error('Invalid Hub config');
             const candidate = JSON.parse(args[++i]);
@@ -1914,9 +1918,12 @@ async function main() {
     }
     if (isV2) {
         if (checkIfAppIsRunning()) throw new Error('Antigravity 在锁定后重新启动，已停止写入。');
-        transaction.recover(resourcesDir, { rescueSidecar: huifu });
+        transaction.recover(resourcesDir, { rescueSidecar: huifu,
+            configFile: path.join(__dirname, 'wallpaper_config.json') });
     }
+    let configPlan = null;
     if (hubConfig) {
+        if (!isV2) throw new Error('Hub config transaction requires ASAR installation');
         const configFile = path.join(__dirname, 'wallpaper_config.json');
         let current = {};
         if (fs.existsSync(configFile)) {
@@ -1924,19 +1931,19 @@ async function main() {
             catch (error) { if (!(error instanceof SyntaxError)) throw error; }
         }
         if (!current || typeof current !== 'object' || Array.isArray(current)) current = {};
-        fs.writeFileSync(configFile, JSON.stringify({ ...current, ...hubConfig }, null, 2), 'utf8');
+        configPlan = { file: configFile, value: { ...current, ...hubConfig } };
     }
     if (huifu) {
         console.log("====== 正在卸载中文汉化，恢复官方原版 ======");
         if (isV2) {
-            success = restore20(resourcesDir, transaction);
+            success = restore20(resourcesDir, transaction, confirmUnverified);
         } else {
             success = restore10(installDir);
         }
     } else {
         console.log("====== 正在安装 Antigravity 中文汉化 ======");
         if (isV2) {
-            success = await install20(resourcesDir, transaction);
+            success = await install20(resourcesDir, transaction, confirmUnverified, configPlan);
         } else {
             success = install10(installDir);
         }
@@ -1962,7 +1969,7 @@ async function main() {
                     console.warn(`[警告] 未找到客户端主程序: ${exePath}`);
                 }
             } else if (process.platform === 'darwin') {
-                child_process.exec(`open "${installDir}"`);
+                child_process.execFileSync('open', [installDir], { stdio: 'ignore', shell: false });
                 console.log("[启动] 客户端启动成功！");
             }
         } catch (e) {
