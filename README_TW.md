@@ -1,9 +1,11 @@
 # Antigravity 2.0 智能編程中文語言包 & 繁體中文引擎
 
+> 使用邊界：本工具會修改 Google Antigravity 的 `app.asar`；[Google 通用條款](https://policies.google.com/terms)禁止修改其軟體。私人倉庫不改變此條款；詳見 [Google Antigravity 附加條款](https://antigravity.google/terms)。
+
 👉 **[簡體中文版說明文件 (Simplified Chinese README)](README.md)**
 
 > **支援系統**：Windows & macOS (均已內建一鍵指令碼)  
-> **匹配版本**：Antigravity v2.12.2  
+> **匹配版本**：以實際安裝版本測試為準；尚無完整版本相容性矩陣。
 > **核心引擎**：Node.js >=22.12.0；首次使用前執行 `npm ci --omit=dev` 安裝鎖定依賴。壁紙處理的部分功能仍需 Python。
 > **中文化範圍**：包括軟體介面、頂部系統功能表、工作列右鍵選單、載入動畫、設定面板、新手引導及登入頁。  
 > **注入原理**：修改 `app.asar` 注入 `preload.js`；安裝前保留帶 SHA-256 校驗的版本化基線備份，恢復前會驗證備份。pointer 的元資料摘要可發現元資料不一致，但不能證明官方簽章，也不能抵抗可同時改寫所有本地檔案的攻擊者或保證零風險。
@@ -12,10 +14,10 @@
 > **關於聊天歷史記錄/對話方塊內容被中文化的已知問題及匹配機制說明（開發者必讀）**：
 > - **現象**：當你在聊天或對話方塊中發送了某些與軟體介面 UI 完全相同的英文關鍵詞或句子時，該對話氣泡在介面上可能會被翻譯引擎中文化顯示。
 > - **核心匹配機制**：
->   - **短詞（長度 <= 15 字元，如 `Knowledge`）**：翻譯僅在詞條 **完全精準匹配（且個別占一行）** 時觸發。如果該詞前後有其他任何字元、空格或標點符號（如 `Knowledge是什麼`、`哈哈 Knowledge`），則 **絕對不會** 被翻譯。如果需要強行阻止其翻譯，可使用中文雙引號將其包裹（如 `“Knowledge”`）即可完美規避。
->   - **長句（長度 > 15 字元，如 `Enable Antigravity to deploy apps...`）**：由於需要相容介面動態渲染，長句採用 **“子串滑動替換”** 算法。這意味著只要輸入的文字中包含了這一長串完整英文字句，該段子串就會被自動翻譯成中文（即使加了引號或前後帶有文字）。但由於長句匹配極其苛刻，必須一字不差（包括大小寫、標點和空格），因此實際聊天中幾乎不可能誤觸發。
-> - **說明**：這**不影響 AI 接收到的原文**。大模型取得的依舊是你發送的純正英文原始指令，僅在軟體的視覺渲染層面發生了中文化，純屬視覺影響，無需擔心影響大模型的效果。
-> - **歡迎提 PR**：由於 Electron 沙箱及 iframe webview DOM 樹隔離問題，此處難以直接利用主視窗類名隔離，期待有缘人提交 PR 完美解決該問題！
+>   - **短詞（長度 <= 15 字元，如 `Knowledge`）**：通常以精準匹配觸發；聊天內容仍有被誤譯的可能，請勿依賴引號作為可靠的隔離方式。
+>   - **長句（長度 > 15 字元，如 `Enable Antigravity to deploy apps...`）**：子串匹配可能改變聊天文字的顯示；遇到誤譯時請以原文資料為準。
+> - **說明**：目前尚未以端到端測試證明誤譯不會影響送出的內容；重要提示詞請自行核對。
+> - **歡迎提 PR**：聊天內容隔離仍待完善，歡迎提供可重現案例與修正。
 
 ## 📸 中文化效果展示
 
@@ -52,11 +54,9 @@
 * **方法 B：透過 Git 命令列複製（開發者推薦 💻）**
   如果您本機安裝了 Git，可以直接在終端機執行複製命令：
   ```bash
-  # 如果您在國內，推薦使用下方代理加速複製地址：
-  git clone https://mirror.ghproxy.com/https://github.com/qqxpee/antigravity2-cn.git
-  
-  # 如果您配置了全域代理，可直接使用官方地址：
-  git clone https://github.com/qqxpee/antigravity2-cn.git
+  git clone https://github.com/KK-Skyline/antigravity-diy-toolkit.git
+  cd antigravity-diy-toolkit
+  npm ci --omit=dev
   ```
 
 ---
@@ -64,7 +64,7 @@
 ### 2. 一鍵安裝中文化
 1. **完全退出** Antigravity 編程軟體。
 2. 首次安裝或軟體更新後，先自行核對目前 `app.asar` 的來源與雜湊；確認接受其來源後，在本專案資料夾執行 `node localization_engine.js --tw --confirm-unverified-baseline`。此命令會建立版本化基線並**同時完成本次繁體安裝**，不是僅備份；工具不會驗證官方簽章。
-3. 後續可進入您解壓或複製出來的 `antigravity2-cn` 資料夾：
+3. 後續可進入您解壓或複製出來的 `antigravity-diy-toolkit` 資料夾：
    - **Windows**：雙擊執行 **`双击安装繁体中文.bat`**。
    - **macOS**：雙擊執行 **`双击安装繁体中文.command`**。
 4. 依提示選擇左上角品牌顯示方式：顯示英文 Antigravity（預設推薦）、不顯示品牌名稱、或顯示繁體中文品牌名。
@@ -150,7 +150,7 @@ node localization_engine.js --tw --brand-title translated
 1. **命令 AI 更新**：在對話中透過截圖或文字告訴 AI 您的中文化需求，AI 會自動更新 `dicts_tw/` 下的字典檔案。
 2. **退出軟體**：**完全退出**您的 Antigravity 軟體。
 3. **重新注入**：在當前資料夾中**再次雙擊執行 `双击安装繁体中文.bat` / `.command`** 重新部署中文化。
-4. **重啟軟體**：重新開啟 Antigravity，您的改動即可完美生效！
+4. **重啟軟體**：重新開啟 Antigravity，檢查改動是否生效。
 
 ---
 
@@ -178,7 +178,7 @@ node localization_engine.js --tw --brand-title translated
 ### 2）提示「權限不足」或 macOS 提示「無法開啟」
 * **解決**：
   - **Windows**：請右鍵點擊 `双击安装繁体中文.bat`，選擇 **“以系統管理員身分執行”**。
-  - **macOS**：若雙擊執行 `.command` 提示無法開啟或沒有執行權限，可在終端機中執行 `chmod +x *.command` 來授權。如果是系統安全攔截，請在「系統設定 -> 隱私權與安全性」中點擊「仍要開啟」。本中文化包已內建自動重新簽名機制，修改後會重新進行 Ad-hoc 簽名以防止 macOS 提示應用程式損壞。
+  - **macOS**：若雙擊執行 `.command` 提示無法開啟或沒有執行權限，可在終端機中執行 `chmod +x *.command` 來授權。工具會嘗試 Ad-hoc 重新簽名；實際權限、簽章和啟動結果仍須在目標機器驗證。
 
 ### 3）軟體官方更新後，中文化失效了怎麼辦？
 * 軟體升級可能覆蓋 `app.asar`。完全退出後，先核對新版 `app.asar` 的來源與雜湊，再執行 `node localization_engine.js --tw --confirm-unverified-baseline` 建立新版基線並同時安裝；未確認時不得直接雙擊重裝。
@@ -186,5 +186,7 @@ node localization_engine.js --tw --brand-title translated
 ---
 
 ## 🤝 致謝
+- 本專案衍生自 [qqxpee/antigravity2-cn](https://github.com/qqxpee/antigravity2-cn)；原專案及貢獻者保有其權利。上游尚無授權檔案，本倉庫整體再發布與授權範圍待確認。
+- 本倉庫未包含 Google Antigravity 或 Wallpaper Engine 的安裝檔案。問題回報請使用本倉庫的 [Issues](https://github.com/KK-Skyline/antigravity-diy-toolkit/issues)。
 - 感謝所有參與測試與回饋的貢獻者！
-- 特別鳴謝 **[yuaotian/antigravity-proxy](https://github.com/yuaotian/antigravity-proxy)** 提供優秀的 Windows 免 TUN 強制代理注入方案。
+- 舊版曾參考 [yuaotian/antigravity-proxy](https://github.com/yuaotian/antigravity-proxy)；目前自動注入功能已停用。

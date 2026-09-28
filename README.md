@@ -1,8 +1,8 @@
 # Antigravity 2.0 终极定制套件 (DIY Customization & Localization Toolkit)
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Platform: Windows & macOS](https://img.shields.io/badge/Platform-Windows%20%7C%20macOS-brightgreen.svg)]()
-[![Antigravity: v2.x Compatible](https://img.shields.io/badge/Antigravity-v2.x-orange.svg)]()
+> 许可状态：上游代码及素材的再发布授权仍待核实；请勿仅凭仓库公开可见或历史 MIT 徽章推定可自由再分发。
+>
+> 使用边界：本工具会修改 Google Antigravity 的 `app.asar`。Google 通用条款禁止修改其软件；私有仓库不改变该条款。参见 [Google Antigravity 附加条款](https://antigravity.google/terms)及其引用的 [Google 通用条款](https://policies.google.com/terms)。
 
 👉 **[繁體中文版說明文件 (Traditional Chinese README)](README_TW.md)**
 
@@ -12,16 +12,16 @@
 
 本项目不仅是 **Antigravity 2.0+** 的深度汉化包，也提供桌面定制功能。运行时不下载 ASAR 工具；首次使用需 Node.js >=22.12.0 并执行 `npm ci --omit=dev` 安装锁定依赖。
 
-1. **🎨 Wallpaper Engine 创意工坊深度联动 (2K 60FPS 动态引擎)**
+1. **🎨 Wallpaper Engine 创意工坊联动**
    - 自动扫描本地 Steam 创意工坊已订阅壁纸库，无需手动找图；
-   - **真 2K（2560×1440）原画重构**：杜绝低清缩略图拉伸，自动提取 `scene.pkg` 核心高清母带；
-   - **真 60 帧丝滑动态**：支持 MP4/WebM 视频硬件级解码与粒子烟雾逐帧渲染（120 帧 60.0000 FPS 无缝循环）；
-   - **零 DOM 崩塌**：采用全局层级的亚克力穿透渲染，不破坏任何原有编辑器和代码高亮结构。
+   - 可尝试从 `scene.pkg` 提取较高清素材；效果取决于壁纸资源；
+   - 支持 MP4/WebM 视频及场景动画，帧率和画质取决于素材与设备；
+   - 通过 CSS 和页面注入呈现亚克力效果。
 2. **🌐 独立交互式控制中心：壁纸选择库 (Wallpaper Hub)**
    - 运行于 `http://localhost:3210` 的独立 Web 控制台；
    - 支持实时关键词搜索、类型过滤（视频壁纸 / 场景动画 / 网页交互 / 当前生效）；
    - **现代丝滑调参抽屉**：配备 `setPointerCapture` 连续捕获引擎的流体滑块（透明度、毛玻璃模糊、对比度、亮度、饱和度、边缘暗化）；
-   - 一键换肤并自动热重启生效。
+   - 应用换肤并重新启动客户端生效。
 3. **💎「失重亚克力」毛玻璃主题 (Weightless Acrylic Glass)**
    - 智能色彩提取算法：动态捕捉当前壁纸主色系，计算悬浮岛磨砂玻璃色调；
    - 全透明系统标题栏 + 悬浮岛式侧边栏 + 呼吸过渡动画；
@@ -31,7 +31,7 @@
 5. **🈳 深度中文汉化 (简繁双语)**
    - 全面覆盖主界面、系统菜单、右键托盘、加载语录、设置中心与登录页；
    - 具备长句与短词匹配；聊天正文与模型输出的隔离仍待完善。
-6. **🛡️ 纯净安全 & 零隐私依赖**
+6. **🛡️ 备份与恢复**
    - 不修改核心二进制执行文件，纯 JavaScript/CSS 动态注入；
    - 安装前保留版本化、带 SHA-256 校验的基线备份；恢复前验证备份并保留原件。pointer 中的元数据摘要可发现元数据不一致，但不能证明官方签名，也不能抵抗可同时改写所有本地文件的攻击者或保证零风险。
 
@@ -39,9 +39,9 @@
 
 ## 📸 效果展示
 
-| 壁纸控制中心 (Wallpaper Hub) | 失重亚克力 2K 动态桌面 |
+| 简体中文主界面 | 简体中文菜单 |
 | :---: | :---: |
-| 实时流体调参 · 创意工坊秒级扫描 | 2560×1440 60 帧无损动态背景 |
+| ![简体中文界面](showimg/showmain.png) | ![简体中文菜单](showimg/showmenu.png) |
 
 ---
 
@@ -63,17 +63,18 @@
 
 ## 🚀 极速使用指南
 
-### 1. 下载与解压
+### 1. 准备环境与下载
+- 安装 Node.js >=22.12.0；在项目目录执行 `npm ci --omit=dev`。壁纸素材处理的部分功能还需要 Python 和 Wallpaper Engine。
 - 直接 Clone 本仓库或下载 ZIP 包并解压至任意目录：
   ```bash
   git clone https://github.com/KK-Skyline/antigravity-diy-toolkit.git
   ```
 
 ### 2. 启动壁纸选择库 (Wallpaper Hub)
-1. 双击运行 **`双击打开-壁纸选择库.bat`**；
+1. Windows 双击运行 **`双击打开-壁纸选择库.bat`**；
 2. 浏览器将自动打开 `http://localhost:3210`；
 3. 浏览你订阅的所有 Wallpaper Engine 壁纸，点击任意卡片展开右侧抽屉；
-4. 自由拖动调节透明度与模糊度，点击 **【一键应用换肤到零重力】** 即可立即生效！
+4. 选择壁纸并调节视觉参数，按界面提示应用；首次使用前配置为禁用状态，不预选其他用户的创意工坊作品。
 
 ### 3. 一键安装中文汉化
 1. 退出 Antigravity 客户端；
@@ -114,12 +115,13 @@ node localization_engine.js --huifu --confirm-unverified-baseline
 
 ## 🔒 隐私与安全声明
 
-- **零密钥上传**：本项目代码完全在本地运行，绝不收集或上传任何 API Key、密码、网络凭证或用户代码；
-- **文件保护**：本地配置文件 `wallpaper_config.json` 仅保存视觉调参参数（透明度、滤镜、工坊ID），不包含敏感个人信息。
+- Wallpaper Hub 仅监听本机回环地址；使用前仍应自行审查脚本及依赖。
+- `wallpaper_config.json` 会保存视觉参数、创意工坊 ID 和壁纸描述；该文件当前由 Git 跟踪，分享修改后的仓库或补丁前请检查其中内容。
 
 ---
 
 ## 🤝 致谢与协议
 
-- 本项目基于 MIT 许可证开源；
-- 特别鸣谢社区中提供透明代理方案与亚克力设计灵感的所有贡献者！
+- 本项目衍生自 [qqxpee/antigravity2-cn](https://github.com/qqxpee/antigravity2-cn)，保留原项目及贡献者的归属。上游目前未提供许可证文件，再发布及本仓库整体授权范围待确认。
+- 此仓库未包含 Google Antigravity 或 Wallpaper Engine 的安装文件，相关商标归各自权利人所有。
+- 问题反馈请使用本仓库的 [Issues](https://github.com/KK-Skyline/antigravity-diy-toolkit/issues)。
