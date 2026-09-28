@@ -95,12 +95,7 @@ if (USE_TW) {
         "[启动] 检测到安装前反重力客户端处于开启状态，正在重新启动客户端...": "[啟動] 偵測到安裝前反重力用戶端處於開啟狀態，正在重新啟動用戶端...",
         "[启动] 客户端启动成功！": "[啟動] 用戶端啟動成功！",
         "[警告] 未找到客户端主程序: ": "[警告] 未找到用戶端主程式: ",
-        "[警告] 客户端启动失败: ": "[警告] 用戶端啟動失敗: ",
-        "[代理] 检测到 proxy_config 配置目录，正在注入代理模块...": "[代理] 偵測到 proxy_config 設定目錄，正在注入代理模組...",
-        "[代理] 代理模块注入成功: ": "[代理] 代理模組注入成功: ",
-        "[代理] 已清理代理注入文件: ": "[代理] 已清理代理注入檔案: ",
-        "[代理警告] 注入文件 ": "[代理警告] 注入檔案 ",
-        "[代理警告] 移除代理文件 ": "[代理警告] 移除代理檔案 "
+        "[警告] 客户端启动失败: ": "[警告] 用戶端啟動失敗: "
     };
     const translateMsg = (args) => {
         return args.map(arg => {
@@ -277,7 +272,7 @@ function detectSceneEffects(dir) {
     return effects;
 }
 
-function generateJs() {
+function generateJs(configOverride = null) {
     const fullDict = loadDictionary();
     const longEntries = Object.entries(fullDict).sort((a, b) => b[0].length - a[0].length);
     
@@ -304,6 +299,8 @@ function generateJs() {
             if (fs.existsSync(cfgFile)) {
                 try { Object.assign(userCfg, JSON.parse(fs.readFileSync(cfgFile, 'utf8'))); } catch(e) {}
             }
+            if (configOverride) Object.assign(userCfg, configOverride);
+            if (!/^\d{1,20}$/.test(String(userCfg.workshopId))) throw new Error('Invalid workshopId');
             const weReader = require('./wallpaper_engine_reader');
             let wp = weReader.getActiveWallpaper(userCfg.monitor, userCfg.workshopId);
             // 场景 / 图片壁纸：运行 2K 60FPS 超清预设管线。
@@ -312,7 +309,7 @@ function generateJs() {
                 try {
                     const prepScript = path.join(__dirname, 'prepare_hd_wallpaper.py');
                     if (fs.existsSync(prepScript) && userCfg.workshopId) {
-                        child_process.execSync(`python "${prepScript}" ${userCfg.workshopId}`, { stdio: 'ignore', windowsHide: true });
+                        child_process.execFileSync('python', [prepScript, String(userCfg.workshopId)], { stdio: 'ignore', windowsHide: true, shell: false });
                         wp = weReader.getActiveWallpaper(userCfg.monitor, userCfg.workshopId);
                     }
                 } catch (e) {}
@@ -1199,28 +1196,58 @@ function escapeRegExp(string) {
 
 let wasAppRunning = false;
 
-function checkIfAppIsRunning() {
-    try {
-        if (process.platform === 'win32') {
-            const stdout = child_process.execSync('tasklist /fi "imagename eq Antigravity.exe" /nh', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-            return stdout.toLowerCase().includes('antigravity.exe');
-        } else if (process.platform === 'darwin') {
-            const stdout = child_process.execSync('pgrep -f Antigravity', { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
-            return stdout.trim().length > 0;
+function macClientPids(installDir) {
+    let output;
+    try { output = child_process.execFileSync('/usr/bin/pgrep', ['-x', 'Antigravity'], { encoding: 'utf8' }); }
+    catch (error) { if (error.status === 1) return []; throw error; }
+    const values = output.trim().split(/\s+/).filter(Boolean);
+    if (values.some(value => !/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)))) {
+        throw new Error('无法核验 macOS 客户端 PID。');
+    }
+    const pids = values.map(Number).filter(pid => pid !== process.pid);
+    if (!pids.length) return [];
+    let app = fs.realpathSync(installDir);
+    while (!app.endsWith('.app') && path.dirname(app) !== app) app = path.dirname(app);
+    if (!app.endsWith('.app')) throw new Error('无法定位 macOS 客户端应用包。');
+    const expected = fs.realpathSync(path.join(app, 'Contents', 'MacOS', 'Antigravity'));
+    return pids.filter(pid => {
+        // ponytail: AppKit supplies the main executable; unavailable identity stops rather than guessing from argv or mappings.
+        const script = `ObjC.import('AppKit'); function run(args) {
+            const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(Number(args[0]));
+            if (!app) return 'null';
+            return JSON.stringify({ pid: Number(app.processIdentifier), path: ObjC.unwrap(app.executableURL.path) });
+        }`;
+        const output = child_process.execFileSync('/usr/bin/osascript',
+            ['-l', 'JavaScript', '-e', script, String(pid)], { encoding: 'utf8' });
+        const identity = JSON.parse(output.trim());
+        if (identity?.pid !== pid || typeof identity.path !== 'string' ||
+            !path.isAbsolute(identity.path) || /[\r\n]/.test(identity.path)) {
+            throw new Error(`无法核验 macOS 客户端进程 ${pid} 的可执行路径。`);
         }
-    } catch (e) {
-        // ignore
+        return fs.realpathSync(identity.path) === expected;
+    });
+}
+
+function checkIfAppIsRunning(installDir) {
+    if (process.platform === 'win32') {
+        const stdout = child_process.execFileSync('tasklist', ['/fi', 'imagename eq Antigravity.exe', '/nh'], {
+            encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true
+        });
+        return stdout.split(/\r?\n/).some(line => /^Antigravity\.exe\s/i.test(line.trim()));
+    }
+    if (process.platform === 'darwin') {
+        return macClientPids(installDir).length > 0;
     }
     return false;
 }
 
-function closeAntigravityProcesses() {
+function closeAntigravityProcesses(installDir) {
     console.log("[1] 检测到 Antigravity 客户端正在运行，正在关闭以解除文件锁...");
     try {
         if (process.platform === 'win32') {
-            child_process.execSync('taskkill /f /im Antigravity.exe /t >nul 2>nul');
-        } else {
-            child_process.execSync('pkill -f Antigravity >/dev/null 2>&1');
+            child_process.execFileSync('taskkill', ['/f', '/im', 'Antigravity.exe', '/t'], { stdio: 'ignore', windowsHide: true });
+        } else if (process.platform === 'darwin') {
+            for (const pid of macClientPids(installDir)) process.kill(pid, 'SIGTERM');
         }
     } catch (e) {
         // ignore
@@ -1232,7 +1259,7 @@ function closeAntigravityProcesses() {
 function detectInstallationDir(manualDir) {
     if (manualDir) {
         if (fs.existsSync(manualDir)) {
-            let resolved = path.resolve(manualDir);
+            let resolved = process.platform === 'darwin' ? fs.realpathSync(manualDir) : path.resolve(manualDir);
             if (fs.statSync(resolved).isFile() && resolved.endsWith('app.asar')) {
                 resolved = path.dirname(resolved);
             }
@@ -1256,8 +1283,12 @@ function detectInstallationDir(manualDir) {
     };
     const hasAntigravityResources = (candidate) => {
         return fs.existsSync(path.join(candidate, "resources", "app.asar")) ||
+            fs.existsSync(path.join(candidate, "resources", "app.asar.rollback")) ||
+            fs.existsSync(path.join(candidate, "resources", "app.asar.baseline.json")) ||
             fs.existsSync(path.join(candidate, "app.asar")) ||
+            fs.existsSync(path.join(candidate, "app.asar.rollback")) ||
             fs.existsSync(path.join(candidate, "Contents", "Resources", "app.asar")) ||
+            fs.existsSync(path.join(candidate, "Contents", "Resources", "app.asar.rollback")) ||
             fs.existsSync(path.join(candidate, "resources", "app", "product.json"));
     };
 
@@ -1272,7 +1303,7 @@ function detectInstallationDir(manualDir) {
         ];
         for (const root of registryRoots) {
             try {
-                const output = child_process.execSync(`reg query "${root}" /s /f Antigravity /d`, { encoding: 'utf-8', stdio: 'pipe' });
+                const output = child_process.execFileSync('reg', ['query', root, '/s', '/f', 'Antigravity', '/d'], { encoding: 'utf-8', stdio: 'pipe' });
                 for (const line of output.split(/\r?\n/)) {
                     const match = line.match(/^\s*(InstallLocation|DisplayIcon)\s+REG_\w+\s+(.+)$/i);
                     if (!match) continue;
@@ -1314,9 +1345,9 @@ function detectInstallationDir(manualDir) {
     process.exit(1);
 }
 
-function runCommandSync(cmd) {
+function runCommandSync(file, args) {
     try {
-        const out = child_process.execSync(cmd, { encoding: 'utf-8', stdio: 'pipe' });
+        const out = child_process.execFileSync(file, args, { encoding: 'utf-8', stdio: 'pipe' });
         return { success: true, stdout: out, stderr: '' };
     } catch (e) {
         return { success: false, stdout: e.stdout || '', stderr: e.stderr || e.message };
@@ -1369,10 +1400,10 @@ function resignAppOnMac(anyPath) {
     
     if (targetApp && fs.existsSync(targetApp)) {
         try {
-            runCommandSync(`xattr -d -r com.apple.quarantine "${targetApp}"`);
+            runCommandSync('xattr', ['-d', '-r', 'com.apple.quarantine', targetApp]);
         } catch (e) {}
         console.log(`[签名] 检测到 macOS 平台，正在对应用包进行本地 ad-hoc 深度重签名: ${targetApp} ...`);
-        const signRes = runCommandSync(`codesign --force --deep --sign - "${targetApp}"`);
+        const signRes = runCommandSync('codesign', ['--force', '--deep', '--sign', '-', targetApp]);
         if (signRes.success) {
             console.log(`[签名] 重新签名成功！`);
         } else {
@@ -1409,72 +1440,21 @@ function ensureWritePermission(targetDir) {
 // ==========================================
 // Antigravity 2.0 汉化引擎 (ASAR打包注入模式)
 // ==========================================
-function install20(resourcesDir) {
+async function install20(resourcesDir, transaction, confirmUnverified, configPlan) {
     const asarPath = path.join(resourcesDir, "app.asar");
-    const bakPath = path.join(resourcesDir, "app.asar.bak");
-
     if (!fs.existsSync(asarPath)) {
         console.error(`[错误] 未在资源目录中找到 app.asar: ${resourcesDir}`);
         return false;
     }
-
-    // 1. 备份与官方更新检测
-    let isAlreadyLocalized = false;
+    const baseline = transaction.prepareBaseline(resourcesDir, { confirmUnverified });
+    const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'antigravity-asar-'));
     try {
-        const asarBuffer = fs.readFileSync(asarPath);
-        isAlreadyLocalized = asarBuffer.indexOf(Buffer.from(SIGNATURE_START, "utf8")) !== -1;
-    } catch (e) {}
-
-    if (!isAlreadyLocalized) {
-        console.log(`[备份] 检测到全新官方英文版本，正在同步创建/更新官方备份包: ${bakPath} ...`);
-        try {
-            fs.copyFileSync(asarPath, bakPath);
-            console.log(`[备份] 备份成功！`);
-        } catch (e) {
-            console.error(`[错误] 创建备份失败: ${e.message}`);
-            if (process.platform === 'darwin' && e.code === 'EPERM') {
-                console.error(`[提示] macOS 写入受限，请使用管理员权限运行脚本。`);
-            }
-            return false;
-        }
-    } else if (fs.existsSync(bakPath)) {
-        // 尝试用官方备份覆盖当前 app.asar，以确保每次汉化都基于最干净的官方英文包
-        try {
-            fs.copyFileSync(bakPath, asarPath);
-            console.log(`[还原] 已重置当前 app.asar 为官方原始备份包，以进行全新注入...`);
-        } catch (e) {
-            console.log(`[提示] 当前 app.asar 被锁定（可能是客户端正在运行），将使用当前包进行增量注入。`);
-        }
-    } else {
-        console.log(`[备份] 正在创建官方原始包备份: app.asar.bak ...`);
-        try {
-            fs.copyFileSync(asarPath, bakPath);
-            console.log(`[备份] 备份成功！`);
-        } catch (e) {
-            console.error(`[错误] 创建备份失败: ${e.message}`);
-            return false;
-        }
-    }
-
-    // 2. 临时提取目录
-    const tempDir = path.join(__dirname, "_temp_asar");
-    if (fs.existsSync(tempDir)) {
-        fs.rmSync(tempDir, { recursive: true, force: true });
-    }
-
-    console.log(`[解包] 正在使用 npx 提取 app.asar...`);
-    const extractRes = runCommandSync(`npx -y @electron/asar extract "${asarPath}" "${tempDir}"`);
-    if (!extractRes.success || !fs.existsSync(tempDir)) {
-        console.error(`[错误] 解包失败，可能是由于系统未安装 Node.js/npm 或者网络限制。`);
-        console.error(`详情: ${extractRes.stderr}\n${extractRes.stdout}`);
-        return false;
-    }
+        transaction.extractBaseline(baseline, tempDir);
 
     // 3. 注入 preload.js
     const preloadPath = path.join(tempDir, "dist", "preload.js");
     if (!fs.existsSync(preloadPath)) {
         console.error(`[错误] 解压后未能在指定路径找到 preload.js: ${preloadPath}`);
-        fs.rmSync(tempDir, { recursive: true, force: true });
         return false;
     }
 
@@ -1483,7 +1463,7 @@ function install20(resourcesDir) {
 
     // 清理已有的汉化，重新注入
     const cleanedContent = cleanJsContent(content);
-    const translationJs = generateJs();
+    const translationJs = generateJs(configPlan?.value);
     const newContent = cleanedContent + "\n" + translationJs;
 
     fs.writeFileSync(preloadPath, newContent, 'utf-8');
@@ -1744,36 +1724,21 @@ function install20(resourcesDir) {
 
     // 4. 重新打包
     console.log(`[打包] 正在将修改后的内容打包回 app.asar...`);
-    const packRes = runCommandSync(`npx -y @electron/asar pack "${tempDir}" "${asarPath}"`);
-    
-    // 5. 清理临时文件夹
-    fs.rmSync(tempDir, { recursive: true, force: true });
-
-    if (!packRes.success) {
-        console.error(`[错误] 打包失败。`);
-        console.error(`详情: ${packRes.stderr}\n${packRes.stdout}`);
-        return false;
-    }
+    await transaction.packAndReplace(resourcesDir, tempDir, baseline, configPlan);
 
     cleanElectronCache();
     resignAppOnMac(resourcesDir);
     console.log(`[√] Antigravity 2.0 汉化部署完成！`);
     return true;
+    } finally {
+        fs.rmSync(tempDir, { recursive: true, force: true });
+    }
 }
 
-function restore20(resourcesDir) {
-    const asarPath = path.join(resourcesDir, "app.asar");
-    const bakPath = path.join(resourcesDir, "app.asar.bak");
-
-    if (!fs.existsSync(bakPath)) {
-        console.log("[!] 未找到备份文件 app.asar.bak，可能尚未安装过汉化或备份被删除。");
-        return false;
-    }
-
-    console.log("[还原] 正在用官方备份文件恢复...");
+function restore20(resourcesDir, transaction, confirmUnverified) {
+    console.log("[还原] 正在用已保存的基线备份恢复...");
     try {
-        fs.copyFileSync(bakPath, asarPath);
-        fs.unlinkSync(bakPath);
+        transaction.restore(resourcesDir, { confirmUnverified });
     } catch (e) {
         console.error(`[错误] 恢复备份失败: ${e.message}`);
         if (process.platform === 'darwin' && e.code === 'EPERM') {
@@ -1782,7 +1747,7 @@ function restore20(resourcesDir) {
         return false;
     }
     resignAppOnMac(resourcesDir);
-    console.log("[√] 官方 app.asar 已成功恢复！");
+    console.log("[√] 已保存的基线 app.asar 已成功恢复！");
     return true;
 }
 
@@ -1899,83 +1864,14 @@ function restore10(installDir) {
 }
 
 // ==========================================
-// 代理模块管理 (Windows 平台可选注入)
-// ==========================================
-function injectProxyIfNeeded(installDir) {
-    if (process.platform !== 'win32') return;
-    const proxyConfigDir = path.join(__dirname, 'proxy_config');
-    if (!fs.existsSync(proxyConfigDir)) return;
-
-    let files = [];
-    try {
-        files = fs.readdirSync(proxyConfigDir).filter(f => {
-            const fullPath = path.join(proxyConfigDir, f);
-            return fs.statSync(fullPath).isFile();
-        });
-    } catch (e) {
-        return;
-    }
-
-    if (files.length === 0) return;
-
-    console.log(`\n[代理] 检测到 proxy_config 配置目录，正在注入代理模块...`);
-    const injectedFiles = [];
-    for (const file of files) {
-        const src = path.join(proxyConfigDir, file);
-        const dest = path.join(installDir, file);
-        try {
-            fs.copyFileSync(src, dest);
-            injectedFiles.push(file);
-        } catch (e) {
-            console.warn(`[代理警告] 注入文件 ${file} 失败: ${e.message}`);
-        }
-    }
-
-    if (injectedFiles.length > 0) {
-        console.log(`[代理] 代理模块注入成功: ${injectedFiles.join(', ')}`);
-    }
-}
-
-function restoreProxyIfNeeded(installDir) {
-    if (process.platform !== 'win32') return;
-    const proxyFiles = ['version.dll', 'dbghelp.dll', 'config.json'];
-    const proxyConfigDir = path.join(__dirname, 'proxy_config');
-    if (fs.existsSync(proxyConfigDir)) {
-        try {
-            const files = fs.readdirSync(proxyConfigDir);
-            for (const f of files) {
-                if (!proxyFiles.includes(f)) proxyFiles.push(f);
-            }
-        } catch (e) {
-            // ignore
-        }
-    }
-
-    const removedFiles = [];
-    for (const file of proxyFiles) {
-        const dest = path.join(installDir, file);
-        if (fs.existsSync(dest)) {
-            try {
-                fs.unlinkSync(dest);
-                removedFiles.push(file);
-            } catch (e) {
-                console.warn(`[代理警告] 移除代理文件 ${file} 失败: ${e.message}`);
-            }
-        }
-    }
-
-    if (removedFiles.length > 0) {
-        console.log(`[代理] 已清理代理注入文件: ${removedFiles.join(', ')}`);
-    }
-}
-
-// ==========================================
 // 入口
 // ==========================================
-function main() {
+async function main() {
     let huifu = false;
     let manualDir = "";
     let noKill = true; // 默认不主动杀死客户端，防止中断用户当前的智能体配对会话
+    let hubConfig = null;
+    let confirmUnverified = false;
 
     const args = process.argv.slice(2);
     for (let i = 0; i < args.length; i++) {
@@ -1986,23 +1882,33 @@ function main() {
             i++;
         } else if (args[i] === '--no-kill') {
             noKill = true;
+        } else if (args[i] === '--close-app') {
+            noKill = false;
         } else if (args[i] === '--brand-title') {
             i++;
+        } else if (args[i] === '--confirm-unverified-baseline') {
+            confirmUnverified = true;
+        } else if (args[i] === '--hub-config') {
+            if (hubConfig || !args[i + 1] || args[i + 1].length > 2048) throw new Error('Invalid Hub config');
+            const candidate = JSON.parse(args[++i]);
+            const ranges = { opacity: [0.15, 1], blur: [0, 25], brightness: [50, 150],
+                contrast: [50, 160], saturate: [30, 180], darken: [0, 50] };
+            if (!USE_WALLPAPER || huifu || !candidate || typeof candidate !== 'object' || Array.isArray(candidate) ||
+                typeof candidate.workshopId !== 'string' || !/^\d{1,20}$/.test(candidate.workshopId) ||
+                Object.keys(candidate).some(key => key !== 'workshopId' && key !== 'flipHorizontal' && !ranges[key]) ||
+                (candidate.flipHorizontal !== undefined && typeof candidate.flipHorizontal !== 'boolean') ||
+                Object.entries(ranges).some(([key, [min, max]]) => candidate[key] !== undefined &&
+                    (typeof candidate[key] !== 'number' || !Number.isFinite(candidate[key]) ||
+                        candidate[key] < min || candidate[key] > max))) throw new Error('Invalid Hub config');
+            hubConfig = candidate;
         }
     }
+    if (hubConfig && huifu) throw new Error('Invalid Hub config');
 
     // 1. 探测路径
     const installDir = detectInstallationDir(manualDir);
     
-    // 2. 检测客户端是否正在运行，并根据参数决定是否关闭以解除文件锁定
-    wasAppRunning = checkIfAppIsRunning();
-    if (noKill) {
-        console.log("[跳过] 检测到 --no-kill 参数，跳过关闭 Antigravity 运行进程。");
-    } else {
-        closeAntigravityProcesses();
-    }
-
-    // 3. 找到 resources 资源目录
+    // 2. 找到 resources 资源目录
     let resourcesDir = "";
     if (fs.existsSync(path.join(installDir, "resources"))) {
         resourcesDir = path.join(installDir, "resources");
@@ -2020,36 +1926,63 @@ function main() {
 
     if (!fs.existsSync(resourcesDir)) {
         console.error(`[错误] 无法定位有效的资源(resources)目录: ${resourcesDir}`);
-        process.exit(1);
+        throw new Error(`无法定位有效的资源目录: ${resourcesDir}`);
     }
 
     ensureWritePermission(resourcesDir);
 
-    // 4. 根据架构执行
+    // 3. 根据架构执行
     const asarPath = path.join(resourcesDir, "app.asar");
-    const isV2 = fs.existsSync(asarPath);
+    const isV2 = fs.existsSync(asarPath) || fs.existsSync(`${asarPath}.rollback`) ||
+        fs.existsSync(path.join(resourcesDir, 'app.asar.baseline.json'));
     let success = false;
-
+    const transaction = isV2 || hubConfig ? await import('./asar_transaction.mjs') : null;
+    const releaseLock = transaction ? transaction.acquireLock(resourcesDir) : null;
+    try {
+    if (isV2) transaction.preflightBaselineConsent(resourcesDir, { confirmUnverified });
+    wasAppRunning = checkIfAppIsRunning(installDir);
+    if (wasAppRunning && noKill) {
+        throw new Error('Antigravity 正在运行；请先手动关闭，或明确使用 --close-app。');
+    }
+    if (wasAppRunning) {
+        closeAntigravityProcesses(installDir);
+        if (checkIfAppIsRunning(installDir)) throw new Error('Antigravity 未能关闭，已停止写入。');
+    }
+    if (isV2) {
+        if (checkIfAppIsRunning(installDir)) throw new Error('Antigravity 在锁定后重新启动，已停止写入。');
+        transaction.recover(resourcesDir, { rescueSidecar: huifu,
+            configFile: path.join(__dirname, 'wallpaper_config.json'), confirmUnverified });
+        transaction.cleanupOrphanStages(resourcesDir, path.join(__dirname, 'wallpaper_config.json'));
+    }
+    let configPlan = null;
+    if (hubConfig) {
+        if (!isV2) throw new Error('Hub config transaction requires ASAR installation');
+        const configFile = path.join(__dirname, 'wallpaper_config.json');
+        let current = {};
+        if (fs.existsSync(configFile)) {
+            try { current = JSON.parse(fs.readFileSync(configFile, 'utf8')); }
+            catch (error) { if (!(error instanceof SyntaxError)) throw error; }
+        }
+        if (!current || typeof current !== 'object' || Array.isArray(current)) current = {};
+        configPlan = { file: configFile, value: { ...current, ...hubConfig } };
+    }
     if (huifu) {
         console.log("====== 正在卸载中文汉化，恢复官方原版 ======");
         if (isV2) {
-            success = restore20(resourcesDir);
+            success = restore20(resourcesDir, transaction, confirmUnverified);
         } else {
             success = restore10(installDir);
-        }
-        if (success) {
-            restoreProxyIfNeeded(installDir);
         }
     } else {
         console.log("====== 正在安装 Antigravity 中文汉化 ======");
         if (isV2) {
-            success = install20(resourcesDir);
+            success = await install20(resourcesDir, transaction, confirmUnverified, configPlan);
         } else {
             success = install10(installDir);
         }
-        if (success) {
-            injectProxyIfNeeded(installDir);
-        }
+    }
+    } finally {
+        if (releaseLock) releaseLock();
     }
 
     // 5. 校验通过且原来客户端被关闭，则自动重新启动客户端
@@ -2069,7 +2002,7 @@ function main() {
                     console.warn(`[警告] 未找到客户端主程序: ${exePath}`);
                 }
             } else if (process.platform === 'darwin') {
-                child_process.exec(`open "${installDir}"`);
+                child_process.execFileSync('open', [installDir], { stdio: 'ignore', shell: false });
                 console.log("[启动] 客户端启动成功！");
             }
         } catch (e) {
@@ -2077,9 +2010,10 @@ function main() {
         }
     }
 
-    if (!success) {
-        process.exit(1);
-    }
+    if (!success) process.exitCode = 1;
 }
 
-main();
+main().catch(error => {
+    console.error(`[错误] ${error.code === 'ASAR_BUSY' ? 'ASAR_BUSY: ' : ''}${error.message}`);
+    process.exitCode = error.code === 'ASAR_BUSY' ? 75 : 1;
+});
