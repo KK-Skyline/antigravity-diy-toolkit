@@ -1,6 +1,6 @@
 {
-  "enabled": true,
-  "workshopId": "2914659453",
+  "enabled": false,
+  "workshopId": "0",
   "monitor": "Monitor0",
   "opacity": 0.68,
   "blur": 0,
@@ -10,5 +10,5 @@
   "darken": 18,
   "flipHorizontal": false,
   "caretColor": "#4f8cff",
-  "comment": "Antigravity Wallpaper Engine Config: 进击的巨人-兵长-Levi Ackerman"
+  "comment": "Select a Wallpaper Engine item in Wallpaper Hub before applying a wallpaper"
 }
