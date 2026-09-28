@@ -407,10 +407,22 @@ cp.execFileSync = (command, args) => {
         if (state.brokenPath) return 'Antigravity\\n';
         return pid === 424242 || state.spoof ? process.env.MAC_TEST_TARGET_EXE + '\\n' : process.env.MAC_TEST_DUMMY_EXE + '\\n';
     }
+    if (command === '/usr/bin/osascript') {
+        const pid = Number(args.at(-1));
+        const state = JSON.parse(fs.readFileSync(process.env.MAC_TEST_STATE));
+        if (state.nativeError) throw Error('native identity unavailable');
+        if (state.nativeNil) return 'null\\n';
+        if (state.nativeMulti) return '{}\\n{}\\n';
+        const actual = pid === 424242 ? process.env.MAC_TEST_TARGET_EXE : process.env.MAC_TEST_DUMMY_EXE;
+        return JSON.stringify({ pid: state.nativeBadPid ? pid + 1 : pid,
+            path: state.nativeBadPath ? 'Antigravity' : actual }) + '\\n';
+    }
     if (command === '/usr/sbin/lsof') {
         const pid = Number(args[args.indexOf('-p') + 1]);
         const state = JSON.parse(fs.readFileSync(process.env.MAC_TEST_STATE));
         const executable = pid === 424242 ? process.env.MAC_TEST_TARGET_EXE : process.env.MAC_TEST_DUMMY_EXE;
+        if (state.mappedTarget && pid === 434343) return 'p' + pid + '\\nftxt\\nn' + executable + '\\nftxt\\nn' + process.env.MAC_TEST_TARGET_EXE + '\\n';
+        if (state.multiText) return 'p' + pid + '\\nftxt\\nn' + executable + '\\nftxt\\nn/usr/lib/dyld\\n';
         if (state.ambiguous) return 'p' + pid + '\\nftxt\\nn' + executable + '\\nftxt\\nn' + executable + '\\n';
         return state.brokenPath ? 'p' + pid + '\\nftxt\\nnAntigravity\\n' :
             'p' + pid + '\\nftxt\\nn' + executable + '\\n';
@@ -442,23 +454,26 @@ cp.execFileSync = (command, args) => {
     const dummyOnly = runMac(['--huifu']);
     assert.equal(dummyOnly.status, 0, dummyOnly.stderr);
     assert.equal(fs.existsSync(macSelfKill), false);
-    fs.writeFileSync(macState, JSON.stringify({ dummy: true, spoof: true }));
+    fs.writeFileSync(macState, JSON.stringify({ dummy: true, spoof: true, mappedTarget: true }));
     const forgedArgv = runMac(['--huifu', '--close-app']);
     assert.equal(forgedArgv.status, 0, forgedArgv.stderr);
     assert.equal(fs.existsSync(macSelfKill), false);
     assert.equal(macCalls().some(call => call.command === 'kill'), false);
     assert.equal(macCalls().some(call => call.command === 'ps'), false);
-    fs.writeFileSync(macState, JSON.stringify({ target: true, brokenPath: true }));
+    assert.equal(macCalls().some(call => call.command === '/usr/sbin/lsof'), false);
     const beforeUnknownPath = snapshot(macResources);
-    const unknownPath = runMac(['--huifu', '--close-app']);
-    assert.equal(unknownPath.status, 1, unknownPath.stderr);
-    assert.deepEqual(snapshot(macResources), beforeUnknownPath);
-    assert.equal(macCalls().some(call => call.command === 'kill'), false);
-    fs.writeFileSync(macState, JSON.stringify({ target: true, ambiguous: true }));
-    const ambiguousPath = runMac(['--huifu', '--close-app']);
-    assert.equal(ambiguousPath.status, 1, ambiguousPath.stderr);
-    assert.deepEqual(snapshot(macResources), beforeUnknownPath);
-    assert.equal(macCalls().some(call => call.command === 'kill'), false);
+    for (const failure of ['nativeNil', 'nativeMulti', 'nativeBadPid', 'nativeBadPath', 'nativeError']) {
+        fs.writeFileSync(macState, JSON.stringify({ target: true, [failure]: true }));
+        const rejected = runMac(['--huifu', '--close-app']);
+        assert.equal(rejected.status, 1, `${failure}: ${rejected.stderr}`);
+        assert.deepEqual(snapshot(macResources), beforeUnknownPath);
+        assert.equal(macCalls().some(call => call.command === 'kill'), false);
+    }
+    fs.writeFileSync(macState, JSON.stringify({ target: true, multiText: true }));
+    const multiTextTarget = runMac(['--huifu', '--close-app']);
+    assert.equal(multiTextTarget.status, 0, multiTextTarget.stderr);
+    assert.equal(JSON.parse(fs.readFileSync(macState)).target, false);
+    assert.equal(macCalls().some(call => call.command === '/usr/sbin/lsof'), false);
     fs.writeFileSync(macState, JSON.stringify({ target: true, dummy: true }));
     const beforeMacNoKill = snapshot(macResources);
     const configBeforeMacNoKill = fs.existsSync(engineConfig) ? fs.readFileSync(engineConfig) : null;
@@ -470,26 +485,37 @@ cp.execFileSync = (command, args) => {
         assert.deepEqual(fs.existsSync(engineConfig) ? fs.readFileSync(engineConfig) : null,
             configBeforeMacNoKill);
     }
+    const linkedResources = path.join(fixture, 'linked-resources');
+    const linkedAsarDir = path.join(fixture, 'linked-asar');
+    fs.symlinkSync(macResources, linkedResources, 'dir');
+    fs.mkdirSync(linkedAsarDir);
+    fs.symlinkSync(macLive, path.join(linkedAsarDir, 'app.asar'), 'file');
+    for (const linkedPath of [linkedResources, path.join(linkedAsarDir, 'app.asar')]) {
+        const rejected = runMac(['--huifu', '--confirm-unverified-baseline'], linkedPath);
+        assert.equal(rejected.status, 1, rejected.stderr);
+        assert.match(rejected.stderr, /正在运行/);
+        assert.deepEqual(snapshot(macResources), beforeMacNoKill);
+    }
     assert.equal(macCalls().some(call => call.command === 'pkill'), false);
     const closed = runMac(['--close-app']);
     assert.equal(closed.status, 0, closed.stderr);
     assert.equal(tx.inspectArchive(macLive).localized, true);
     assert.deepEqual(JSON.parse(fs.readFileSync(macState)), { target: false, dummy: true });
     assert.equal(fs.existsSync(macSelfKill), false);
-    assert.deepEqual(macCalls().filter(call => call.command === 'kill').map(call => call.pid), [424242]);
+    assert.deepEqual(macCalls().filter(call => call.command === 'kill').map(call => call.pid), [424242, 424242]);
     fs.writeFileSync(macState, JSON.stringify({ target: true, dummy: true }));
     const resourcePathClose = runMac(['--huifu', '--close-app'], macResources);
     assert.equal(resourcePathClose.status, 0, resourcePathClose.stderr);
     assert.deepEqual(JSON.parse(fs.readFileSync(macState)), { target: false, dummy: true });
-    assert.deepEqual(macCalls().filter(call => call.command === 'kill').map(call => call.pid), [424242, 424242]);
+    assert.deepEqual(macCalls().filter(call => call.command === 'kill').map(call => call.pid), [424242, 424242, 424242]);
     fs.writeFileSync(macState, JSON.stringify({ target: true, dummy: true }));
     const asarPathClose = runMac(['--huifu', '--close-app'], macLive);
     assert.equal(asarPathClose.status, 0, asarPathClose.stderr);
     assert.deepEqual(JSON.parse(fs.readFileSync(macState)), { target: false, dummy: true });
-    assert.deepEqual(macCalls().filter(call => call.command === 'kill').map(call => call.pid), [424242, 424242, 424242]);
+    assert.deepEqual(macCalls().filter(call => call.command === 'kill').map(call => call.pid), [424242, 424242, 424242, 424242]);
     const unrelatedOnly = runMac(['--huifu', '--close-app']);
     assert.equal(unrelatedOnly.status, 0, unrelatedOnly.stderr);
-    assert.deepEqual(macCalls().filter(call => call.command === 'kill').map(call => call.pid), [424242, 424242, 424242]);
+    assert.deepEqual(macCalls().filter(call => call.command === 'kill').map(call => call.pid), [424242, 424242, 424242, 424242]);
     assert.ok(macCalls().filter(call => call.command === 'pgrep')
         .every(call => JSON.stringify(call.args) === JSON.stringify(['-x', 'Antigravity'])));
     assert.equal(macCalls().some(call => call.command === 'pkill'), false);

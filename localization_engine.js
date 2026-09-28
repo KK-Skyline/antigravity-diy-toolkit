@@ -1206,19 +1206,25 @@ function macClientPids(installDir) {
     }
     const pids = values.map(Number).filter(pid => pid !== process.pid);
     if (!pids.length) return [];
-    let app = path.resolve(installDir);
+    let app = fs.realpathSync(installDir);
     while (!app.endsWith('.app') && path.dirname(app) !== app) app = path.dirname(app);
     if (!app.endsWith('.app')) throw new Error('无法定位 macOS 客户端应用包。');
     const expected = fs.realpathSync(path.join(app, 'Contents', 'MacOS', 'Antigravity'));
     return pids.filter(pid => {
-        // ponytail: lsof's mapped text file avoids argv[0]; fail closed if macOS cannot report one unambiguous executable.
-        const output = child_process.execFileSync('/usr/sbin/lsof', ['-a', '-p', String(pid), '-d', 'txt', '-F', 'pfn'],
-            { encoding: 'utf8' });
-        const match = /^p(\d+)\nftxt\nn([^\r\n]+)\n?$/.exec(output);
-        if (!match || Number(match[1]) !== pid || !path.isAbsolute(match[2])) {
+        // ponytail: AppKit supplies the main executable; unavailable identity stops rather than guessing from argv or mappings.
+        const script = `ObjC.import('AppKit'); function run(args) {
+            const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(Number(args[0]));
+            if (!app) return 'null';
+            return JSON.stringify({ pid: Number(app.processIdentifier), path: ObjC.unwrap(app.executableURL.path) });
+        }`;
+        const output = child_process.execFileSync('/usr/bin/osascript',
+            ['-l', 'JavaScript', '-e', script, String(pid)], { encoding: 'utf8' });
+        const identity = JSON.parse(output.trim());
+        if (identity?.pid !== pid || typeof identity.path !== 'string' ||
+            !path.isAbsolute(identity.path) || /[\r\n]/.test(identity.path)) {
             throw new Error(`无法核验 macOS 客户端进程 ${pid} 的可执行路径。`);
         }
-        return fs.realpathSync(match[2]) === expected;
+        return fs.realpathSync(identity.path) === expected;
     });
 }
 
@@ -1253,7 +1259,7 @@ function closeAntigravityProcesses(installDir) {
 function detectInstallationDir(manualDir) {
     if (manualDir) {
         if (fs.existsSync(manualDir)) {
-            let resolved = path.resolve(manualDir);
+            let resolved = process.platform === 'darwin' ? fs.realpathSync(manualDir) : path.resolve(manualDir);
             if (fs.statSync(resolved).isFile() && resolved.endsWith('app.asar')) {
                 resolved = path.dirname(resolved);
             }
