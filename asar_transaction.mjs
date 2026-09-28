@@ -462,6 +462,30 @@ export function recover(dir, { rescueSidecar = false, configFile = null, confirm
     inspectArchive(live);
 }
 
+export function cleanupOrphanStages(dir, configFile) {
+    const owner = JSON.parse(fs.readFileSync(path.join(dir, 'app.asar.install.lock'), 'utf8'));
+    if (owner.pid !== process.pid) throw new Error('ASAR install lock is required for stage cleanup');
+    if (fs.existsSync(configMarkerPath(dir)) || fs.existsSync(restoreMarkerPath(dir))) return;
+    if (path.basename(configFile) !== 'wallpaper_config.json') throw new Error('Invalid config stage target');
+    const suffix = '([1-9]\\d*)-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+    const sweep = (root, pattern, sidecar = false) => {
+        let changed = false;
+        for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+            const match = pattern.exec(entry.name);
+            const pid = match && Number(match[1]);
+            if (!Number.isSafeInteger(pid) || processAlive(pid)) continue;
+            const file = path.join(root, entry.name);
+            if (entry.isFile()) fs.unlinkSync(file);
+            else if (sidecar && match[2] && entry.isDirectory()) fs.rmSync(file, { recursive: true });
+            else continue;
+            changed = true;
+        }
+        if (changed) syncDir(root);
+    };
+    sweep(dir, new RegExp(`^app\\.asar\\.new-${suffix}(\\.unpacked)?$`), true);
+    sweep(path.dirname(configFile), new RegExp(`^wallpaper_config\\.json\\.new-${suffix}$`));
+}
+
 function readRestoreMarker(dir) {
     const marker = JSON.parse(fs.readFileSync(restoreMarkerPath(dir), 'utf8'));
     if (marker.mode !== 'restore' || !SHA.test(marker.sha256) ||

@@ -1196,7 +1196,28 @@ function escapeRegExp(string) {
 
 let wasAppRunning = false;
 
-function checkIfAppIsRunning() {
+function macClientPids(installDir) {
+    let output;
+    try { output = child_process.execFileSync('pgrep', ['-x', 'Antigravity'], { encoding: 'utf8' }); }
+    catch (error) { if (error.status === 1) return []; throw error; }
+    const values = output.trim().split(/\s+/).filter(Boolean);
+    if (values.some(value => !/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)))) {
+        throw new Error('无法核验 macOS 客户端 PID。');
+    }
+    const pids = values.map(Number).filter(pid => pid !== process.pid);
+    if (!pids.length) return [];
+    const expected = fs.realpathSync(path.join(installDir, 'Contents', 'MacOS', 'Antigravity'));
+    return pids.filter(pid => {
+        const executable = child_process.execFileSync('ps', ['-ww', '-p', String(pid), '-o', 'comm='],
+            { encoding: 'utf8' }).trim();
+        if (!path.isAbsolute(executable) || executable.includes('\n')) {
+            throw new Error(`无法核验 macOS 客户端进程 ${pid} 的可执行路径。`);
+        }
+        return fs.realpathSync(executable) === expected;
+    });
+}
+
+function checkIfAppIsRunning(installDir) {
     if (process.platform === 'win32') {
         const stdout = child_process.execFileSync('tasklist', ['/fi', 'imagename eq Antigravity.exe', '/nh'], {
             encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true
@@ -1204,22 +1225,18 @@ function checkIfAppIsRunning() {
         return stdout.split(/\r?\n/).some(line => /^Antigravity\.exe\s/i.test(line.trim()));
     }
     if (process.platform === 'darwin') {
-        try {
-            return child_process.execFileSync('pgrep', ['-x', 'Antigravity'], { encoding: 'utf8' })
-                .trim().split(/\s+/).some(pid => Number(pid) > 0 && Number(pid) !== process.pid);
-        }
-        catch (error) { if (error.status !== 1) throw error; }
+        return macClientPids(installDir).length > 0;
     }
     return false;
 }
 
-function closeAntigravityProcesses() {
+function closeAntigravityProcesses(installDir) {
     console.log("[1] 检测到 Antigravity 客户端正在运行，正在关闭以解除文件锁...");
     try {
         if (process.platform === 'win32') {
             child_process.execFileSync('taskkill', ['/f', '/im', 'Antigravity.exe', '/t'], { stdio: 'ignore', windowsHide: true });
         } else if (process.platform === 'darwin') {
-            child_process.execFileSync('pkill', ['-x', 'Antigravity'], { stdio: 'ignore' });
+            for (const pid of macClientPids(installDir)) process.kill(pid, 'SIGTERM');
         }
     } catch (e) {
         // ignore
@@ -1912,18 +1929,19 @@ async function main() {
     const releaseLock = transaction ? transaction.acquireLock(resourcesDir) : null;
     try {
     if (isV2) transaction.preflightBaselineConsent(resourcesDir, { confirmUnverified });
-    wasAppRunning = checkIfAppIsRunning();
+    wasAppRunning = checkIfAppIsRunning(installDir);
     if (wasAppRunning && noKill) {
         throw new Error('Antigravity 正在运行；请先手动关闭，或明确使用 --close-app。');
     }
     if (wasAppRunning) {
-        closeAntigravityProcesses();
-        if (checkIfAppIsRunning()) throw new Error('Antigravity 未能关闭，已停止写入。');
+        closeAntigravityProcesses(installDir);
+        if (checkIfAppIsRunning(installDir)) throw new Error('Antigravity 未能关闭，已停止写入。');
     }
     if (isV2) {
-        if (checkIfAppIsRunning()) throw new Error('Antigravity 在锁定后重新启动，已停止写入。');
+        if (checkIfAppIsRunning(installDir)) throw new Error('Antigravity 在锁定后重新启动，已停止写入。');
         transaction.recover(resourcesDir, { rescueSidecar: huifu,
             configFile: path.join(__dirname, 'wallpaper_config.json'), confirmUnverified });
+        transaction.cleanupOrphanStages(resourcesDir, path.join(__dirname, 'wallpaper_config.json'));
     }
     let configPlan = null;
     if (hubConfig) {

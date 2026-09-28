@@ -330,8 +330,11 @@ try {
     assert.equal(JSON.parse(fs.readFileSync(integrationPointer)).userConfirmedUnverified, true);
     assert.equal(hash(integrationLive), originalHash);
     assert.equal(fs.existsSync(`${integrationLive}.rollback`), false);
+    const engineOrphan = path.join(integrationResources, `app.asar.new-999999999-${crypto.randomUUID()}`);
+    fs.writeFileSync(engineOrphan, 'partial ASAR');
     const restoreRun = spawnSync(process.execPath, [enginePath, '--huifu', '--install-dir', integration], { env, encoding: 'utf8' });
     assert.equal(restoreRun.status, 0, restoreRun.stderr);
+    assert.equal(fs.existsSync(engineOrphan), false);
     assert.equal(hash(integrationLive), originalHash);
     assert.ok(fs.existsSync(path.join(integrationResources, 'app.asar.baseline.json')));
     const runningShim = path.join(fixture, 'running-client.cjs');
@@ -362,6 +365,12 @@ cp.execFileSync = (command, args, options) => {
     fs.cpSync(integration, macApp, { recursive: true });
     const macResources = path.join(macApp, 'resources');
     const macLive = path.join(macResources, 'app.asar');
+    const macTargetExe = path.join(macApp, 'Contents', 'MacOS', 'Antigravity');
+    const macDummyExe = path.join(fixture, 'unrelated', 'Antigravity');
+    fs.mkdirSync(path.dirname(macTargetExe), { recursive: true });
+    fs.mkdirSync(path.dirname(macDummyExe), { recursive: true });
+    fs.writeFileSync(macTargetExe, 'fixture executable');
+    fs.writeFileSync(macDummyExe, 'unrelated executable');
     const macState = path.join(fixture, 'mac-client-state.json');
     const macLog = path.join(fixture, 'mac-process-calls.jsonl');
     const macSelfKill = path.join(fixture, 'mac-self-kill');
@@ -370,24 +379,40 @@ cp.execFileSync = (command, args, options) => {
     fs.writeFileSync(macShim, `Object.defineProperty(process, 'platform', { value: 'darwin' });
 const fs = require('node:fs');
 const cp = require('node:child_process');
+const realKill = process.kill;
+process.kill = (pid, signal) => {
+    if (pid === 434343) { fs.writeFileSync(${JSON.stringify(macSelfKill)}, 'unrelated process killed'); throw Error('unrelated process killed'); }
+    if (pid === 424242 && signal === 'SIGTERM') {
+        fs.appendFileSync(process.env.MAC_TEST_LOG, JSON.stringify({ command: 'kill', pid }) + '\\n');
+        const state = JSON.parse(fs.readFileSync(process.env.MAC_TEST_STATE));
+        fs.writeFileSync(process.env.MAC_TEST_STATE, JSON.stringify({ ...state, target: false }));
+        return true;
+    }
+    return realKill(pid, signal);
+};
 cp.execFileSync = (command, args) => {
     fs.appendFileSync(process.env.MAC_TEST_LOG, JSON.stringify({ command, args }) + '\\n');
     if (command === 'pgrep') {
         if (args.includes('-f')) return String(process.pid) + '\\n';
         const state = JSON.parse(fs.readFileSync(process.env.MAC_TEST_STATE));
-        if (args.includes('-x') && state.self) return String(process.pid) + '\\n';
-        if (args.includes('-x') && state.running) return '424242\\n';
+        const found = [state.self && process.pid, state.dummy && 434343, state.target && 424242].filter(Boolean);
+        if (args.includes('-x') && found.length) return found.join('\\n') + '\\n';
         throw Object.assign(Error('no process'), { status: 1 });
     }
+    if (command === 'ps') {
+        const pid = Number(args[args.indexOf('-p') + 1]);
+        if (JSON.parse(fs.readFileSync(process.env.MAC_TEST_STATE)).brokenPath) return 'Antigravity\\n';
+        return pid === 424242 ? process.env.MAC_TEST_TARGET_EXE + '\\n' : process.env.MAC_TEST_DUMMY_EXE + '\\n';
+    }
     if (command === 'pkill') {
-        if (args.includes('-f')) { fs.writeFileSync(${JSON.stringify(macSelfKill)}, 'matched installer'); process.exit(98); }
-        fs.writeFileSync(process.env.MAC_TEST_STATE, JSON.stringify({ running: false }));
-        return '';
+        fs.writeFileSync(${JSON.stringify(macSelfKill)}, 'name-only kill');
+        process.exit(98);
     }
     if (['xattr', 'codesign', 'open'].includes(command)) return '';
     throw Error('unexpected external command: ' + command);
 };`);
-    const macEnv = { ...env, MAC_TEST_STATE: macState, MAC_TEST_LOG: macLog };
+    const macEnv = { ...env, MAC_TEST_STATE: macState, MAC_TEST_LOG: macLog,
+        MAC_TEST_TARGET_EXE: macTargetExe, MAC_TEST_DUMMY_EXE: macDummyExe };
     const runMac = args => spawnSync(process.execPath,
         ['--require', macShim, enginePath, ...args, '--install-dir', macApp],
         { env: macEnv, encoding: 'utf8' });
@@ -402,7 +427,17 @@ cp.execFileSync = (command, args) => {
     const selfOnly = runMac(['--huifu']);
     assert.equal(selfOnly.status, 0, selfOnly.stderr);
     assert.equal(macCalls().some(call => call.command === 'pkill'), false);
-    fs.writeFileSync(macState, JSON.stringify({ running: true }));
+    fs.writeFileSync(macState, JSON.stringify({ dummy: true }));
+    const dummyOnly = runMac(['--huifu']);
+    assert.equal(dummyOnly.status, 0, dummyOnly.stderr);
+    assert.equal(fs.existsSync(macSelfKill), false);
+    fs.writeFileSync(macState, JSON.stringify({ target: true, brokenPath: true }));
+    const beforeUnknownPath = snapshot(macResources);
+    const unknownPath = runMac(['--huifu', '--close-app']);
+    assert.equal(unknownPath.status, 1, unknownPath.stderr);
+    assert.deepEqual(snapshot(macResources), beforeUnknownPath);
+    assert.equal(macCalls().some(call => call.command === 'kill'), false);
+    fs.writeFileSync(macState, JSON.stringify({ target: true, dummy: true }));
     const beforeMacNoKill = snapshot(macResources);
     const configBeforeMacNoKill = fs.existsSync(engineConfig) ? fs.readFileSync(engineConfig) : null;
     for (const operation of [[], ['--huifu']]) {
@@ -417,14 +452,15 @@ cp.execFileSync = (command, args) => {
     const closed = runMac(['--close-app']);
     assert.equal(closed.status, 0, closed.stderr);
     assert.equal(tx.inspectArchive(macLive).localized, true);
-    assert.equal(JSON.parse(fs.readFileSync(macState)).running, false);
+    assert.deepEqual(JSON.parse(fs.readFileSync(macState)), { target: false, dummy: true });
     assert.equal(fs.existsSync(macSelfKill), false);
-    assert.equal(macCalls().filter(call => call.command === 'pkill').length, 1);
+    assert.deepEqual(macCalls().filter(call => call.command === 'kill').map(call => call.pid), [424242]);
     const unrelatedOnly = runMac(['--huifu', '--close-app']);
     assert.equal(unrelatedOnly.status, 0, unrelatedOnly.stderr);
-    assert.equal(macCalls().filter(call => call.command === 'pkill').length, 1);
-    assert.ok(macCalls().filter(call => ['pgrep', 'pkill'].includes(call.command))
+    assert.deepEqual(macCalls().filter(call => call.command === 'kill').map(call => call.pid), [424242]);
+    assert.ok(macCalls().filter(call => call.command === 'pgrep')
         .every(call => JSON.stringify(call.args) === JSON.stringify(['-x', 'Antigravity'])));
+    assert.equal(macCalls().some(call => call.command === 'pkill'), false);
     const commandCopy = path.join(fixture, 'command-copy');
     const fakeNodeBin = path.join(fixture, 'command-bin');
     fs.mkdirSync(commandCopy);
@@ -641,6 +677,43 @@ cp.execFileSync = (command, args) => {
     assert.equal(JSON.parse(fs.readFileSync(mixedConfig)).opacity, 0.2);
     const committedMixedHash = hash(mixedLive);
     const committedConfig = fs.readFileSync(mixedConfig);
+    const similarAsar = path.join(mixedResources, 'app.asar.new-user-data');
+    const similarConfig = `${mixedConfig}.new-user-data`;
+    fs.writeFileSync(similarAsar, 'user data');
+    fs.writeFileSync(similarConfig, 'user data');
+    const beforeOrphan = snapshot(mixedResources);
+    const orphanSidecar = path.join(mixedResources, `app.asar.new-999999999-${crypto.randomUUID()}.unpacked`);
+    fs.mkdirSync(orphanSidecar);
+    fs.writeFileSync(path.join(orphanSidecar, 'partial.node'), 'partial sidecar');
+    if (process.platform === 'win32') {
+        fs.writeFileSync(path.join(mixedResources, `app.asar.new-999999999-${crypto.randomUUID()}`), 'partial ASAR');
+        fs.writeFileSync(`${mixedConfig}.new-999999999-${crypto.randomUUID()}`, 'partial config');
+    } else {
+        const orphanCrash = spawnSync(process.execPath, ['--input-type=module', '-e',
+            `import fs from 'node:fs'; import { acquireLock, packAndReplace } from ${JSON.stringify(new URL('./asar_transaction.mjs', import.meta.url).href)}; acquireLock(${JSON.stringify(mixedResources)}); const write=fs.writeFileSync; fs.writeFileSync=(file,...args)=>{ const result=write(file,...args); if(String(file).startsWith(${JSON.stringify(`${mixedConfig}.new-`)})) process.kill(process.pid,'SIGKILL'); return result; }; await packAndReplace(${JSON.stringify(mixedResources)},${JSON.stringify(mixedExtracted)},${JSON.stringify(mixedBackup)},${JSON.stringify(mixedConfigPlan(0.3))});`],
+            { encoding: 'utf8' });
+        assert.equal(orphanCrash.signal, 'SIGKILL', orphanCrash.stderr);
+    }
+    assert.equal(fs.existsSync(path.join(mixedResources, 'app.asar.config.pending')), false);
+    assert.ok(fs.readdirSync(mixedResources).some(name => /^app\.asar\.new-\d+-/.test(name)));
+    assert.ok(fs.readdirSync(path.dirname(mixedConfig)).some(name => /^wallpaper_config\.json\.new-\d+-/.test(name)));
+    const releaseOrphan = tx.acquireLock(mixedResources);
+    try {
+        tx.recover(mixedResources, { configFile: mixedConfig });
+        tx.cleanupOrphanStages(mixedResources, mixedConfig);
+    } finally { releaseOrphan(); }
+    assert.throws(() => tx.cleanupOrphanStages(mixedResources, mixedConfig), /lock/);
+    assert.deepEqual(snapshot(mixedResources), beforeOrphan);
+    assert.deepEqual(fs.readFileSync(mixedConfig), committedConfig);
+    assert.equal(fs.readFileSync(similarAsar, 'utf8'), 'user data');
+    assert.equal(fs.readFileSync(similarConfig, 'utf8'), 'user data');
+    const liveStage = path.join(mixedResources, `app.asar.new-${process.pid}-${crypto.randomUUID()}`);
+    fs.writeFileSync(liveStage, 'active owner');
+    const releaseLiveStage = tx.acquireLock(mixedResources);
+    try { tx.cleanupOrphanStages(mixedResources, mixedConfig); }
+    finally { releaseLiveStage(); }
+    assert.equal(fs.readFileSync(liveStage, 'utf8'), 'active owner');
+    fs.unlinkSync(liveStage);
     const beforeDiskFull = snapshot(mixedResources);
     const writeMixed = fs.writeFileSync;
     fs.writeFileSync = (file, ...args) => {
@@ -713,6 +786,18 @@ cp.execFileSync = (command, args) => {
             { encoding: 'utf8' });
         assert.equal(configCrash.signal, 'SIGKILL', configCrash.stderr);
         assert.ok(fs.existsSync(path.join(mixedResources, 'app.asar.config.pending')));
+        const pendingStageName = JSON.parse(fs.readFileSync(path.join(mixedResources, 'app.asar.config.pending'))).stage;
+        const pendingConfigStage = path.join(path.dirname(mixedConfig), pendingStageName);
+        const pendingAsarStage = path.join(mixedResources, `app.asar.new-999999999-${crypto.randomUUID()}`);
+        fs.writeFileSync(pendingConfigStage, 'recoverable stage');
+        fs.writeFileSync(pendingAsarStage, 'unrelated orphan');
+        const beforePendingSweep = snapshot(mixedResources);
+        const releasePendingSweep = tx.acquireLock(mixedResources);
+        try { tx.cleanupOrphanStages(mixedResources, mixedConfig); }
+        finally { releasePendingSweep(); }
+        assert.deepEqual(snapshot(mixedResources), beforePendingSweep);
+        assert.equal(fs.readFileSync(pendingConfigStage, 'utf8'), 'recoverable stage');
+        assert.equal(fs.readFileSync(pendingAsarStage, 'utf8'), 'unrelated orphan');
         const mixedPointer = path.join(mixedResources, 'app.asar.baseline.json');
         const confirmedMixedPointer = fs.readFileSync(mixedPointer);
         fs.writeFileSync(mixedPointer, JSON.stringify({ sha256: JSON.parse(confirmedMixedPointer).sha256 }));
@@ -726,6 +811,10 @@ cp.execFileSync = (command, args) => {
         tx.recover(mixedResources, { configFile: mixedConfig });
         assert.equal(hash(mixedLive), committedMixedHash);
         assert.deepEqual(fs.readFileSync(mixedConfig), committedConfig);
+        const releaseAfterPending = tx.acquireLock(mixedResources);
+        try { tx.cleanupOrphanStages(mixedResources, mixedConfig); }
+        finally { releaseAfterPending(); }
+        assert.equal(fs.existsSync(pendingAsarStage), false);
     }
     fs.unlinkSync(mixedConfig);
     fs.renameSync = (from, to) => {
