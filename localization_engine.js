@@ -1206,14 +1206,19 @@ function macClientPids(installDir) {
     }
     const pids = values.map(Number).filter(pid => pid !== process.pid);
     if (!pids.length) return [];
-    const expected = fs.realpathSync(path.join(installDir, 'Contents', 'MacOS', 'Antigravity'));
+    let app = path.resolve(installDir);
+    while (!app.endsWith('.app') && path.dirname(app) !== app) app = path.dirname(app);
+    if (!app.endsWith('.app')) throw new Error('无法定位 macOS 客户端应用包。');
+    const expected = fs.realpathSync(path.join(app, 'Contents', 'MacOS', 'Antigravity'));
     return pids.filter(pid => {
-        const executable = child_process.execFileSync('ps', ['-ww', '-p', String(pid), '-o', 'comm='],
-            { encoding: 'utf8' }).trim();
-        if (!path.isAbsolute(executable) || executable.includes('\n')) {
+        // ponytail: lsof's mapped text file avoids argv[0]; fail closed if macOS cannot report one unambiguous executable.
+        const output = child_process.execFileSync('/usr/sbin/lsof', ['-a', '-p', String(pid), '-d', 'txt', '-F', 'pfn'],
+            { encoding: 'utf8' });
+        const match = /^p(\d+)\nftxt\nn([^\r\n]+)\n?$/.exec(output);
+        if (!match || Number(match[1]) !== pid || !path.isAbsolute(match[2])) {
             throw new Error(`无法核验 macOS 客户端进程 ${pid} 的可执行路径。`);
         }
-        return fs.realpathSync(executable) === expected;
+        return fs.realpathSync(match[2]) === expected;
     });
 }
 
