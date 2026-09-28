@@ -1198,7 +1198,7 @@ let wasAppRunning = false;
 
 function macClientPids(installDir) {
     let output;
-    try { output = child_process.execFileSync('pgrep', ['-x', 'Antigravity'], { encoding: 'utf8' }); }
+    try { output = child_process.execFileSync('/usr/bin/pgrep', ['-x', 'Antigravity'], { encoding: 'utf8' }); }
     catch (error) { if (error.status === 1) return []; throw error; }
     const values = output.trim().split(/\s+/).filter(Boolean);
     if (values.some(value => !/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)))) {

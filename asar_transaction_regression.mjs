@@ -381,6 +381,7 @@ cp.execFileSync = (command, args, options) => {
     fs.writeFileSync(macShim, `Object.defineProperty(process, 'platform', { value: 'darwin' });
 const fs = require('node:fs');
 const cp = require('node:child_process');
+const realExecFileSync = cp.execFileSync;
 const realKill = process.kill;
 process.kill = (pid, signal) => {
     if (pid === 434343) { fs.writeFileSync(${JSON.stringify(macSelfKill)}, 'unrelated process killed'); throw Error('unrelated process killed'); }
@@ -392,9 +393,10 @@ process.kill = (pid, signal) => {
     }
     return realKill(pid, signal);
 };
-cp.execFileSync = (command, args) => {
+cp.execFileSync = (command, args, options) => {
     fs.appendFileSync(process.env.MAC_TEST_LOG, JSON.stringify({ command, args }) + '\\n');
-    if (command === 'pgrep') {
+    if (command === 'pgrep' && process.env.FAKE_PGREP_MARKER) return realExecFileSync(command, args, options);
+    if (command === '/usr/bin/pgrep') {
         if (args.includes('-f')) return String(process.pid) + '\\n';
         const state = JSON.parse(fs.readFileSync(process.env.MAC_TEST_STATE));
         const found = [state.self && process.pid, state.dummy && 434343, state.target && 424242].filter(Boolean);
@@ -436,9 +438,9 @@ cp.execFileSync = (command, args) => {
 };`);
     const macEnv = { ...env, MAC_TEST_STATE: macState, MAC_TEST_LOG: macLog,
         MAC_TEST_TARGET_EXE: macTargetExe, MAC_TEST_DUMMY_EXE: macDummyExe };
-    const runMac = (args, installPath = macApp) => spawnSync(process.execPath,
+    const runMac = (args, installPath = macApp, extraEnv = {}) => spawnSync(process.execPath,
         ['--require', macShim, enginePath, ...args, '--install-dir', installPath],
-        { env: macEnv, encoding: 'utf8' });
+        { env: { ...macEnv, ...extraEnv }, encoding: 'utf8' });
     const macCalls = () => fs.readFileSync(macLog, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
     for (const operation of [[], ['--tw'], ['--huifu']]) {
         const run = runMac(operation);
@@ -461,6 +463,19 @@ cp.execFileSync = (command, args) => {
     assert.equal(macCalls().some(call => call.command === 'kill'), false);
     assert.equal(macCalls().some(call => call.command === 'ps'), false);
     assert.equal(macCalls().some(call => call.command === '/usr/sbin/lsof'), false);
+    const fakePgrepBin = path.join(fixture, 'fake-pgrep-bin');
+    const fakePgrepMarker = path.join(fixture, 'fake-pgrep-ran');
+    fs.mkdirSync(fakePgrepBin);
+    fs.writeFileSync(path.join(fakePgrepBin, 'pgrep'), '#!/bin/sh\nprintf ran > "$FAKE_PGREP_MARKER"\nexit 1\n',
+        { mode: 0o755 });
+    fs.writeFileSync(macState, JSON.stringify({ target: true }));
+    const beforePathHijack = snapshot(macResources);
+    const pathHijack = runMac(['--huifu'], macApp, {
+        PATH: fakePgrepBin + path.delimiter + process.env.PATH, FAKE_PGREP_MARKER: fakePgrepMarker });
+    assert.equal(pathHijack.status, 1, pathHijack.stderr);
+    assert.match(pathHijack.stderr, /正在运行/);
+    assert.equal(fs.existsSync(fakePgrepMarker), false);
+    assert.deepEqual(snapshot(macResources), beforePathHijack);
     const beforeUnknownPath = snapshot(macResources);
     for (const failure of ['nativeNil', 'nativeMulti', 'nativeBadPid', 'nativeBadPath', 'nativeError']) {
         fs.writeFileSync(macState, JSON.stringify({ target: true, [failure]: true }));
@@ -516,8 +531,10 @@ cp.execFileSync = (command, args) => {
     const unrelatedOnly = runMac(['--huifu', '--close-app']);
     assert.equal(unrelatedOnly.status, 0, unrelatedOnly.stderr);
     assert.deepEqual(macCalls().filter(call => call.command === 'kill').map(call => call.pid), [424242, 424242, 424242, 424242]);
-    assert.ok(macCalls().filter(call => call.command === 'pgrep')
+    assert.ok(macCalls().filter(call => call.command.endsWith('/pgrep'))
         .every(call => JSON.stringify(call.args) === JSON.stringify(['-x', 'Antigravity'])));
+    assert.ok(macCalls().some(call => call.command === '/usr/bin/pgrep'));
+    assert.equal(macCalls().some(call => call.command === 'pgrep'), false);
     assert.equal(macCalls().some(call => call.command === 'pkill'), false);
     const commandCopy = path.join(fixture, 'command-copy');
     const fakeNodeBin = path.join(fixture, 'command-bin');
