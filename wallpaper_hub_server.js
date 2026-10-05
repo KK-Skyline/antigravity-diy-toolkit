@@ -179,23 +179,62 @@ function getBestPreviewFile(itemDir) {
 }
 
 // 重启 Antigravity 客户端
+// Hub 可能是 Antigravity 的子孙进程，杀掉客户端时会被一并带走，
+// 所以「结束 → 等待 → 拉起」整段交给一个与 Hub 完全脱钩的 PowerShell 完成。
+function findAntigravityExe() {
+    const candidates = [
+        process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Programs', 'antigravity', 'Antigravity.exe') : null,
+        'C:\\Program Files\\Antigravity\\Antigravity.exe',
+        'D:\\Programs\\Antigravity\\Antigravity.exe',
+    ].filter(Boolean);
+    return candidates.find(exe => fs.existsSync(exe)) || null;
+}
+
+function encodePowerShell(script) {
+    return Buffer.from(script, 'utf16le').toString('base64');
+}
+
 function restartAntigravityClient() {
+    const exe = findAntigravityExe();
+    if (!exe) {
+        console.error('[Hub] 未找到 Antigravity.exe，跳过自动重启。');
+        return;
+    }
+    const q = s => `'${s.replace(/'/g, "''")}'`;
+    const watcher = [
+        "$ErrorActionPreference = 'SilentlyContinue'",
+        "Stop-Process -Name 'Antigravity' -Force",
+        // 等所有进程真正退出，再多留 2 秒让 Electron 释放单例锁，否则新实例会被判定为重复启动而静默退出
+        "for ($i = 0; $i -lt 50 -and (Get-Process -Name 'Antigravity'); $i++) { Start-Sleep -Milliseconds 200 }",
+        'Start-Sleep -Seconds 2',
+        `Start-Process -FilePath ${q(exe)}`,
+    ].join('\n');
+    const watcherCmd = `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand ${encodePowerShell(watcher)}`;
+
+    const spawnOpts = { detached: true, stdio: 'ignore', windowsHide: true };
+    const spawnDirect = () => {
+        child_process.spawn('powershell.exe',
+            ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encodePowerShell(watcher)],
+            spawnOpts).unref();
+    };
+
+    // 首选：通过 WMI 创建 watcher，进程父级是 WmiPrvSE 而不是 Antigravity，
+    // 不在客户端的 Job Object 里，不会随客户端被一并终止。
+    const launcher = `$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ${q(watcherCmd)} }; exit ([int]$r.ReturnValue)`;
     try {
-        child_process.execSync('taskkill /F /IM Antigravity.exe', { windowsHide: true });
-    } catch(e) {}
-    setTimeout(() => {
-        const candidates = [
-            process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Programs', 'antigravity', 'Antigravity.exe') : null,
-            'C:\\Program Files\\Antigravity\\Antigravity.exe',
-            'D:\\Programs\\Antigravity\\Antigravity.exe',
-        ].filter(Boolean);
-        for (const exe of candidates) {
-            if (fs.existsSync(exe)) {
-                child_process.spawn(exe, [], { detached: true, stdio: 'ignore' }).unref();
-                break;
+        const p = child_process.spawn('powershell.exe',
+            ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encodePowerShell(launcher)],
+            { stdio: 'ignore', windowsHide: true });
+        p.on('error', spawnDirect);
+        p.on('exit', code => {
+            if (code !== 0) {
+                console.warn('[Hub] WMI 启动 watcher 失败(code=%s)，改用直接脱钩启动。', code);
+                spawnDirect();
             }
-        }
-    }, 800);
+        });
+    } catch (e) {
+        spawnDirect();
+    }
 }
 
 // HTTP 服务器
@@ -316,14 +355,23 @@ const server = http.createServer((req, res) => {
                         return;
                     }
                     console.log('[Hub] 壁纸应用成功，输出:\n', stdout);
-                    
+                    // 引擎的警告走 stderr（如「只有低清预览，改用上一张壁纸」），必须带给网页，否则会显示成功却没换
+                    const warnings = String(stderr || '').split(/\r?\n/)
+                        .filter(line => line.includes('[壁纸引擎]'))
+                        .map(line => line.replace(/^.*?\[壁纸引擎\]\s*/, '').trim());
+                    if (warnings.length) console.warn('[Hub] 引擎警告:\n ' + warnings.join('\n '));
+
+                    // 先把响应完整送达浏览器，再等 300ms 让前端渲染提示，最后才触发重启
                     if (data.autoRestart) {
-                        restartAntigravityClient();
+                        res.once('close', () => setTimeout(restartAntigravityClient, 300));
                     }
 
                     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
                     res.end(JSON.stringify({
                         success: true,
+                        restarting: !!data.autoRestart,
+                        warnings,
+                        substituted: warnings.some(w => w.includes('继续使用上一张') || w.includes('本次不使用')),
                         message: '壁纸应用成功！' + (data.autoRestart ? ' 客户端正在自动重启...' : ' 请手动重启客户端以生效。'),
                         workshopId: current.workshopId
                     }));

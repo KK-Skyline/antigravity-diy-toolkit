@@ -298,7 +298,10 @@ let allWallpapers = [];
           body: JSON.stringify(payload)
         });
         const data = await res.json();
-        if (data.success) {
+        if (data.success && data.substituted) {
+          // 引擎拒绝了所选壁纸（低清预览/视频未下载完），实际生效的是上一张
+          showToast('所选壁纸未能应用：' + data.warnings.join(' '), 'error', 12000);
+        } else if (data.success) {
           activeWorkshopId = selectedWp.id;
           renderGrid();
           showToast(data.message, 'success');
@@ -306,7 +309,14 @@ let allWallpapers = [];
           showToast('应用失败: ' + (data.error || '未知错误'), 'error');
         }
       } catch(e) {
-        showToast('请求异常: ' + e.message, 'error');
+        if (payload.autoRestart && e instanceof TypeError) {
+          // 勾选了自动重启时，连接被客户端重载瞬间掐断属于预期情况
+          activeWorkshopId = selectedWp.id;
+          renderGrid();
+          showToast('指令已提交，客户端正在重载，请稍候…（若长时间未启动请手动打开）', 'success');
+        } else {
+          showToast('请求异常: ' + e.message, 'error');
+        }
       } finally {
         btn.disabled = false;
         btn.innerHTML = oldHtml;
@@ -323,7 +333,7 @@ let allWallpapers = [];
       }
     }
 
-    function showToast(text, type = 'success') {
+    function showToast(text, type = 'success', duration = 4000) {
       const toast = document.getElementById('toast');
       toast.textContent = text;
       toast.className = 'fixed bottom-6 right-6 z-50 transition-all duration-300 px-4 py-3 rounded-xl text-sm font-semibold shadow-2xl flex items-center gap-2 ' +
@@ -331,5 +341,5 @@ let allWallpapers = [];
       toast.classList.remove('translate-y-20', 'opacity-0');
       setTimeout(() => {
         toast.classList.add('translate-y-20', 'opacity-0');
-      }, 4000);
+      }, duration);
     }
