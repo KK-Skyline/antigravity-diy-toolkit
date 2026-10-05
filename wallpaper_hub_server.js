@@ -178,66 +178,8 @@ function getBestPreviewFile(itemDir) {
     return null;
 }
 
-// 重启 Antigravity 客户端
-// Hub 可能是 Antigravity 的子孙进程，杀掉客户端时会被一并带走，
-// 所以「结束 → 等待 → 拉起」整段交给一个与 Hub 完全脱钩的 PowerShell 完成。
-function findAntigravityExe() {
-    const candidates = [
-        process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, 'Programs', 'antigravity', 'Antigravity.exe') : null,
-        'C:\\Program Files\\Antigravity\\Antigravity.exe',
-        'D:\\Programs\\Antigravity\\Antigravity.exe',
-    ].filter(Boolean);
-    return candidates.find(exe => fs.existsSync(exe)) || null;
-}
-
-function encodePowerShell(script) {
-    return Buffer.from(script, 'utf16le').toString('base64');
-}
-
-function restartAntigravityClient() {
-    const exe = findAntigravityExe();
-    if (!exe) {
-        console.error('[Hub] 未找到 Antigravity.exe，跳过自动重启。');
-        return;
-    }
-    const q = s => `'${s.replace(/'/g, "''")}'`;
-    const watcher = [
-        "$ErrorActionPreference = 'SilentlyContinue'",
-        "Stop-Process -Name 'Antigravity' -Force",
-        // 等所有进程真正退出，再多留 2 秒让 Electron 释放单例锁，否则新实例会被判定为重复启动而静默退出
-        "for ($i = 0; $i -lt 50 -and (Get-Process -Name 'Antigravity'); $i++) { Start-Sleep -Milliseconds 200 }",
-        'Start-Sleep -Seconds 2',
-        `Start-Process -FilePath ${q(exe)}`,
-    ].join('\n');
-    const watcherCmd = `powershell.exe -NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand ${encodePowerShell(watcher)}`;
-
-    const spawnOpts = { detached: true, stdio: 'ignore', windowsHide: true };
-    const spawnDirect = () => {
-        child_process.spawn('powershell.exe',
-            ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encodePowerShell(watcher)],
-            spawnOpts).unref();
-    };
-
-    // 首选：通过 WMI 创建 watcher，进程父级是 WmiPrvSE 而不是 Antigravity，
-    // 不在客户端的 Job Object 里，不会随客户端被一并终止。
-    const launcher = `$r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = ${q(watcherCmd)} }; exit ([int]$r.ReturnValue)`;
-    try {
-        const p = child_process.spawn('powershell.exe',
-            ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encodePowerShell(launcher)],
-            { stdio: 'ignore', windowsHide: true });
-        p.on('error', spawnDirect);
-        p.on('exit', code => {
-            if (code !== 0) {
-                console.warn('[Hub] WMI 启动 watcher 失败(code=%s)，改用直接脱钩启动。', code);
-                spawnDirect();
-            }
-        });
-    } catch (e) {
-        spawnDirect();
-    }
-}
-
 // HTTP 服务器
+let applyInFlight = false;
 const server = http.createServer((req, res) => {
     res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'");
     res.setHeader('X-Frame-Options', 'DENY');
@@ -312,6 +254,7 @@ const server = http.createServer((req, res) => {
     if (pathname === '/api/apply' && req.method === 'POST') {
         readJsonBody(req).then(data => {
             let validated = false;
+            let ownsApplyLock = false;
             try {
                 for (const [key, [min, max]] of Object.entries(NUMBER_RANGES)) {
                     if (data[key] !== undefined &&
@@ -328,30 +271,31 @@ const server = http.createServer((req, res) => {
                     throw new Error('Invalid workshopId');
                 }
                 validated = true;
-                const current = readConfig();
-                
-                current.workshopId = id;
-                if (typeof data.opacity === 'number') current.opacity = data.opacity;
-                if (typeof data.blur === 'number') current.blur = data.blur;
-                if (typeof data.brightness === 'number') current.brightness = data.brightness;
-                if (typeof data.contrast === 'number') current.contrast = data.contrast;
-                if (typeof data.saturate === 'number') current.saturate = data.saturate;
-                if (typeof data.darken === 'number') current.darken = data.darken;
-                if (typeof data.flipHorizontal === 'boolean') current.flipHorizontal = data.flipHorizontal;
-
-                // 写入配置文件
-                fs.writeFileSync(CFG_FILE, JSON.stringify(current, null, 2), 'utf8');
+                if (applyInFlight) {
+                    sendJson(res, 409, { success: false, code: 'APPLY_BUSY', error: '已有应用任务正在执行。' });
+                    return;
+                }
+                applyInFlight = true;
+                ownsApplyLock = true;
+                const patch = { workshopId: id };
+                for (const key of [...Object.keys(NUMBER_RANGES), 'flipHorizontal']) {
+                    if (data[key] !== undefined) patch[key] = data[key];
+                }
 
                 // 执行注入打包引擎
                 const scriptPath = path.join(__dirname, 'localization_engine.js');
-                const args = [scriptPath, '--wallpaper'];
-                if (!data.autoRestart) args.push('--no-kill');
+                const args = [scriptPath, '--wallpaper', '--hub-config', JSON.stringify(patch)];
+                args.push(data.autoRestart ? '--close-app' : '--no-kill');
                 console.log('[Hub] 正在执行应用指令:', process.execPath, args);
                 
                 child_process.execFile(process.execPath, args, { cwd: __dirname, windowsHide: true, shell: false }, (err, stdout, stderr) => {
+                    applyInFlight = false;
                     if (err) {
                         console.error('[Hub] 应用壁纸失败:', stderr || err.message);
-                        sendJson(res, 500, { success: false, code: 'APPLY_FAILED', error: '应用失败，请查看服务端日志。' });
+                        const busy = err.code === 75 && /(?:^|\n)(?:\[错误\] )?ASAR_BUSY:?(?:\s|$)/.test(stderr || '');
+                        sendJson(res, busy ? 409 : 500, busy
+                            ? { success: false, code: 'APPLY_BUSY', error: '已有应用任务正在执行。' }
+                            : { success: false, code: 'APPLY_FAILED', error: '应用失败，请查看服务端日志。' });
                         return;
                     }
                     console.log('[Hub] 壁纸应用成功，输出:\n', stdout);
@@ -361,11 +305,6 @@ const server = http.createServer((req, res) => {
                         .map(line => line.replace(/^.*?\[壁纸引擎\]\s*/, '').trim());
                     if (warnings.length) console.warn('[Hub] 引擎警告:\n ' + warnings.join('\n '));
 
-                    // 先把响应完整送达浏览器，再等 300ms 让前端渲染提示，最后才触发重启
-                    if (data.autoRestart) {
-                        res.once('close', () => setTimeout(restartAntigravityClient, 300));
-                    }
-
                     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
                     res.end(JSON.stringify({
                         success: true,
@@ -373,10 +312,11 @@ const server = http.createServer((req, res) => {
                         warnings,
                         substituted: warnings.some(w => w.includes('继续使用上一张') || w.includes('本次不使用')),
                         message: '壁纸应用成功！' + (data.autoRestart ? ' 客户端正在自动重启...' : ' 请手动重启客户端以生效。'),
-                        workshopId: current.workshopId
+                        workshopId: id
                     }));
                 });
             } catch(e) {
+                if (ownsApplyLock) applyInFlight = false;
                 console.error('[Hub] 应用请求失败:', e);
                 sendJson(res, validated ? 500 : 400, validated
                     ? { success: false, code: 'APPLY_FAILED', error: '应用失败，请查看服务端日志。' }
@@ -676,8 +616,8 @@ function renderDashboardHtml() {
       <!-- 操作与选项 -->
       <div class="space-y-3 pt-2">
         <label class="flex items-center gap-2.5 text-xs text-slate-300 cursor-pointer p-2.5 rounded-lg bg-[#141a29] border border-cardBorder">
-          <input id="chkAutoRestart" type="checkbox" checked class="w-4 h-4 rounded text-blue-600 accent-blue-500" />
-          <span>应用后自动重启 Antigravity 客户端（立即生效）</span>
+          <input id="chkAutoRestart" type="checkbox" class="w-4 h-4 rounded text-blue-600 accent-blue-500" />
+          <span>允许关闭并重启 Antigravity 客户端（立即生效）</span>
         </label>
 
         <button id="btnApply" data-action="apply" class="w-full py-3 rounded-xl bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white font-bold text-sm shadow-lg shadow-blue-500/25 transition-all flex items-center justify-center gap-2">

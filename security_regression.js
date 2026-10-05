@@ -13,7 +13,11 @@ const realConfigBefore = hash(realConfig);
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'antigravity-hub-test-'));
 const fixtureConfig = path.join(fixture, 'wallpaper_config.json');
 const calls = path.join(fixture, 'localizer.calls');
+const appliedConfigs = path.join(fixture, 'localizer.applied');
 const failFlag = path.join(fixture, 'localizer.fail');
+const busyFlag = path.join(fixture, 'localizer.busy');
+const exit75Flag = path.join(fixture, 'localizer.exit75');
+const waitFlag = path.join(fixture, 'localizer.wait');
 let server;
 let competingServer;
 
@@ -29,11 +33,23 @@ function prepareFixture() {
     fs.writeFileSync(path.join(fixture, 'wallpaper_engine_reader.js'), 'module.exports = {};\n');
     fs.writeFileSync(path.join(fixture, 'localization_engine.js'), [
         "const fs = require('fs');",
-        "fs.appendFileSync(process.env.HUB_STUB_CALLS, 'called\\n');",
+        "if (fs.existsSync(process.env.HUB_STUB_BUSY)) { process.stderr.write('ASAR_BUSY\\n'); process.exit(75); }",
+        "if (fs.existsSync(process.env.HUB_STUB_EXIT75)) process.exit(75);",
+        "const args = process.argv.slice(2);",
+        "const configArg = args.indexOf('--hub-config');",
+        "if (configArg < 0) throw new Error('Missing locked Hub config');",
+        "const invocation = JSON.stringify(args.filter((_, i) => i !== configArg && i !== configArg + 1)) + '\\n';",
         "if (fs.existsSync(process.env.HUB_STUB_FAIL)) {",
+        "    fs.appendFileSync(process.env.HUB_STUB_CALLS, invocation);",
         "    process.stderr.write('PRIVATE_LOCALIZER_DETAILS\\n');",
         "    process.exit(17);",
-        "}"
+        "}",
+        "const configFile = require('path').join(__dirname, 'wallpaper_config.json');",
+        "const next = { ...JSON.parse(fs.readFileSync(configFile, 'utf8')), ...JSON.parse(args[configArg + 1]) };",
+        "fs.writeFileSync(configFile, JSON.stringify(next, null, 2));",
+        "fs.appendFileSync(process.env.HUB_STUB_CALLS, invocation);",
+        "fs.appendFileSync(process.env.HUB_STUB_APPLIED, JSON.stringify(next) + '\\n');",
+        "if (fs.existsSync(process.env.HUB_STUB_WAIT)) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 350);"
     ].join('\n'));
     fs.writeFileSync(fixtureConfig, '{}');
 }
@@ -41,7 +57,8 @@ function prepareFixture() {
 function spawnHub() {
     const child = spawn(process.execPath, [path.join(fixture, 'wallpaper_hub_server.js')], {
         cwd: fixture, stdio: ['ignore', 'pipe', 'pipe'],
-        env: { ...process.env, HUB_STUB_CALLS: calls, HUB_STUB_FAIL: failFlag }
+        env: { ...process.env, HUB_STUB_CALLS: calls, HUB_STUB_APPLIED: appliedConfigs, HUB_STUB_FAIL: failFlag,
+            HUB_STUB_BUSY: busyFlag, HUB_STUB_EXIT75: exit75Flag, HUB_STUB_WAIT: waitFlag }
     });
     child.output = { stdout: '', stderr: '' };
     child.stdout.on('data', chunk => { child.output.stdout += chunk; });
@@ -96,6 +113,7 @@ async function main() {
     assert.strictEqual(page.headers['x-frame-options'], 'DENY');
     assert.match(page.text, /src="\/hub\.js"/);
     assert.match(page.text, /href="\/hub\.css"/);
+    assert.doesNotMatch(page.text, /id="chkAutoRestart"[^>]*\bchecked\b/);
     assert.doesNotMatch(page.text, /cdn\.tailwindcss|<script>|\sonclick=|\soninput=|\sonerror=/);
     assert.strictEqual((await request('/hub.css')).status, 200);
     assert.strictEqual((await request('/hub.js')).status, 200);
@@ -137,18 +155,23 @@ async function main() {
     assert.strictEqual(hash(fixtureConfig), fixtureConfigBefore);
     assert.strictEqual(fs.existsSync(calls), false, 'Invalid requests must not invoke the localizer');
 
-    assert.strictEqual((await post('/api/apply', { workshopId: '123', autoRestart: false })).status, 200);
-    assert.strictEqual(fs.readFileSync(calls, 'utf8').trim(), 'called');
+    assert.strictEqual((await post('/api/apply', { workshopId: '123', opacity: 0.4, autoRestart: false })).status, 200);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(calls, 'utf8').trim()), ['--wallpaper', '--no-kill']);
     assert.strictEqual(JSON.parse(fs.readFileSync(fixtureConfig, 'utf8')).workshopId, '123');
+    assert.strictEqual(JSON.parse(fs.readFileSync(fixtureConfig, 'utf8')).opacity, 0.4);
+    assert.strictEqual(JSON.parse(fs.readFileSync(appliedConfigs, 'utf8').trim()).opacity, 0.4);
 
     fs.writeFileSync(failFlag, '');
-    const failedApply = await post('/api/apply', { workshopId: '123', autoRestart: false });
+    const configBeforeFailure = fs.readFileSync(fixtureConfig);
+    const failedApply = await post('/api/apply', { workshopId: '123', opacity: 0.3, autoRestart: false });
     assert.strictEqual(failedApply.status, 500);
     assert.deepStrictEqual(JSON.parse(failedApply.text),
         { success: false, code: 'APPLY_FAILED', error: '应用失败，请查看服务端日志。' });
     assert.doesNotMatch(failedApply.text, /PRIVATE_LOCALIZER_DETAILS|details|stderr|localization_engine/);
     assert.match(server.output.stderr, /PRIVATE_LOCALIZER_DETAILS/);
+    assert.deepStrictEqual(fs.readFileSync(fixtureConfig), configBeforeFailure, 'Failed apply mutated config');
 
+    fs.unlinkSync(failFlag);
     fs.renameSync(fixtureConfig, fixtureConfig + '.saved');
     fs.mkdirSync(fixtureConfig);
     const failedWrite = await post('/api/apply', { workshopId: '123', autoRestart: false });
@@ -159,6 +182,33 @@ async function main() {
     assert.strictEqual(fs.readFileSync(calls, 'utf8').trim().split('\n').length, 2);
     fs.rmdirSync(fixtureConfig);
     fs.renameSync(fixtureConfig + '.saved', fixtureConfig);
+
+    fs.writeFileSync(busyFlag, '');
+    const configBeforeBusy = fs.readFileSync(fixtureConfig);
+    const crossProcessBusy = await post('/api/apply', { workshopId: '123', opacity: 0.2, autoRestart: false });
+    assert.strictEqual(crossProcessBusy.status, 409);
+    assert.deepStrictEqual(JSON.parse(crossProcessBusy.text),
+        { success: false, code: 'APPLY_BUSY', error: '已有应用任务正在执行。' });
+    assert.deepStrictEqual(fs.readFileSync(fixtureConfig), configBeforeBusy, 'Busy apply mutated config');
+    assert.strictEqual(fs.readFileSync(calls, 'utf8').trim().split('\n').length, 2);
+    fs.unlinkSync(busyFlag);
+    fs.writeFileSync(exit75Flag, '');
+    assert.strictEqual((await post('/api/apply', { workshopId: '123', autoRestart: false })).status, 500);
+    fs.unlinkSync(exit75Flag);
+    fs.writeFileSync(waitFlag, '');
+    const firstApply = post('/api/apply', { workshopId: '123', autoRestart: true });
+    for (let attempt = 0; attempt < 100; attempt++) {
+        if (fs.readFileSync(calls, 'utf8').trim().split('\n').length === 3) break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.strictEqual(fs.readFileSync(calls, 'utf8').trim().split('\n').length, 3);
+    const busyApply = await post('/api/apply', { workshopId: '123', autoRestart: true });
+    assert.strictEqual(busyApply.status, 409);
+    assert.strictEqual(JSON.parse(busyApply.text).code, 'APPLY_BUSY');
+    assert.strictEqual((await firstApply).status, 200);
+    assert.deepStrictEqual(JSON.parse(fs.readFileSync(calls, 'utf8').trim().split('\n').at(-1)),
+        ['--wallpaper', '--close-app']);
+    fs.unlinkSync(waitFlag);
 
     competingServer = spawnHub();
     const conflictingExit = await waitForExit(competingServer);
