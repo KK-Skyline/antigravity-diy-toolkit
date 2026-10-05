@@ -106,11 +106,14 @@ function parseWallpaperDir(dir, monitorKey = 'Default', configPath = '') {
     // 1. 视频壁纸：直接播放原视频（原始分辨率、完整时长、原生帧率、硬件解码），
     //    这里只记录视频路径，另外挑一张静态图作为加载完成前的占位封面
     const projectFile = String(project.file || '').toLowerCase();
-    const videoPath = project.file ? path.join(dir, project.file) : null;
-    if ((projectFile.endsWith('.mp4') || projectFile.endsWith('.webm')) && videoPath && fs.existsSync(videoPath)) {
+    const isProjectVideo = projectFile.endsWith('.mp4') || projectFile.endsWith('.webm');
+    // 场景壁纸的主画面如果是嵌入视频，prepare_hd_wallpaper.py 会把它提取成 scene_video.mp4，同样按视频播放
+    const sceneVideo = path.join(dir, 'scene_video.mp4');
+    const videoPath = isProjectVideo ? path.join(dir, project.file) : (fs.existsSync(sceneVideo) ? sceneVideo : null);
+    if (videoPath && fs.existsSync(videoPath)) {
         result.type = 'video';
         result.videoPath = videoPath.replace(/\\/g, '/');
-        result.videoMime = projectFile.endsWith('.webm') ? 'video/webm' : 'video/mp4';
+        result.videoMime = videoPath.toLowerCase().endsWith('.webm') ? 'video/webm' : 'video/mp4';
         const posters = [
             path.join(dir, 'preview_hd.jpg'),
             path.join(dir, 'preview.jpg'),

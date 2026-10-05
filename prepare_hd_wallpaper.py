@@ -203,6 +203,9 @@ def _mostly_transparent(img):
 
 
 def _vec(value, n, default):
+    # 带脚本的属性形如 {"script": "...", "value": "1 1 1"}，取其中的静态值
+    if isinstance(value, dict):
+        value = value.get("value")
     try:
         vals = [float(v) for v in str(value).split()] if value is not None else []
     except ValueError:
@@ -277,6 +280,84 @@ def composite_scene(pkg_path):
     return canvas.convert("RGB")
 
 
+SCENE_VIDEO_NAME = "scene_video.mp4"
+
+
+def extract_scene_video(wp_dir, pkg_path):
+    """有些场景壁纸的主画面是一段嵌在 .tex 材质里的 MP4（贴图格式为 mp4），静态合成只能得到空白。
+    把它提取成 scene_video.mp4，交给运行时的 <video> 原视频播放通道（GPU 解码、原分辨率、完整时长）。
+    只认覆盖画布一半以上的可见图层，避免把角落里的小装饰动画当成壁纸。成功返回视频路径，否则 None。"""
+    import json
+    import extract_scene_pkg
+    magic, entries, data_start = extract_scene_pkg.parse_pkg(pkg_path)
+    index = {n: (o, l) for n, o, l in entries}
+
+    def load_json(name):
+        if name not in index:
+            return None
+        try:
+            return json.loads(extract_scene_pkg.read_entry(pkg_path, data_start, *index[name]).decode("utf-8"))
+        except Exception:
+            return None
+
+    scene = load_json("scene.json")
+    if not scene:
+        return None
+    proj = scene.get("general", {}).get("orthogonalprojection") or {}
+    W, H = int(proj.get("width", 0) or 0), int(proj.get("height", 0) or 0)
+    if W <= 0 or H <= 0:
+        return None
+    best = None
+    for ob in scene.get("objects", []):
+        visible = ob.get("visible", True)
+        if isinstance(visible, dict):
+            visible = visible.get("value", True)
+        if "image" not in ob or visible is False:
+            continue
+        model = load_json(ob["image"])
+        mat = load_json(model["material"]) if model and "material" in model else None
+        try:
+            key = "materials/" + str(mat["passes"][0]["textures"][0]) + ".tex"
+        except (TypeError, KeyError, IndexError):
+            continue
+        if key not in index:
+            continue
+        header, images, image_format = extract_scene_pkg.parse_tex(extract_scene_pkg.read_entry(pkg_path, data_start, *index[key]))
+        if not images or not images[0] or extract_scene_pkg.tex_payload_kind(header, image_format, images[0]) != "mp4":
+            continue
+        sw, sh = _vec(ob.get("size"), 2, 0.0)
+        sx, sy, _ = _vec(ob.get("scale"), 3, 1.0)
+        area = sw * abs(sx) * sh * abs(sy)
+        if area >= 0.5 * W * H and (best is None or area > best[0]):
+            best = (area, images[0][0][2])
+    if best is None:
+        return None
+    raw = best[1]
+    out = os.path.join(wp_dir, SCENE_VIDEO_NAME)
+    if not (os.path.isfile(out) and os.path.getsize(out) == len(raw)):
+        tmp = out + ".tmp"
+        with open(tmp, "wb") as f:
+            f.write(raw)
+        os.replace(tmp, out)
+        print(f"  √ 场景主画面是嵌入视频，已提取为 {SCENE_VIDEO_NAME} ({len(raw) / 1024 / 1024:.1f} MB)")
+    return out
+
+
+def write_video_poster(video_path, out_hd, at_seconds=1.0):
+    """截取视频约 1 秒处的一帧作为封面（视频加载完成前显示、也用于取色）"""
+    import av
+    img = None
+    with av.open(video_path) as container:
+        for frame in container.decode(container.streams.video[0]):
+            img = frame.to_image()
+            if frame.time is None or frame.time >= at_seconds:
+                break
+    if img is None:
+        return False
+    fit_16x9(img.convert("RGB")).save(out_hd, quality=92)
+    return True
+
+
 def process_scene_wallpaper(wp_dir):
     """处理场景壁纸: 从 scene.pkg 提取最高画质材质并升级至 2K"""
     pkg_path = os.path.join(wp_dir, "scene.pkg")
@@ -287,6 +368,22 @@ def process_scene_wallpaper(wp_dir):
     out_webp = os.path.join(wp_dir, "preview_animated.webp")
     
     gif_path = os.path.join(wp_dir, "preview.gif")
+
+    # 主画面是嵌入视频的场景：提取原视频，走视频播放通道；封面只在缺失时生成
+    try:
+        scene_video = extract_scene_video(wp_dir, pkg_path)
+    except Exception as e:
+        scene_video = None
+        print(f"  !! 检查场景嵌入视频失败: {e}")
+    if scene_video:
+        if not os.path.isfile(out_hd):
+            try:
+                if write_video_poster(scene_video, out_hd):
+                    write_hd_meta(wp_dir, "scene-video")
+                    print("  √ 已从视频截取封面: preview_hd.jpg")
+            except Exception as e:
+                print(f"  !! 截取视频封面失败（不影响视频播放）: {e}")
+        return True
 
     # 旧版本会把小缩略图 GIF 硬放大成"2K 动图"（马赛克 + 拉伸）。这种动图不能再用：
     # 改名备份，让读取器回退到清晰的 preview_hd.jpg。
