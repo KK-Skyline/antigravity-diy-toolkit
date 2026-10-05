@@ -1931,10 +1931,18 @@ async function main() {
 
     // 3. 根据架构执行
     const asarPath = path.join(resourcesDir, "app.asar");
-    const isV2 = fs.existsSync(asarPath) || fs.existsSync(`${asarPath}.rollback`) ||
+    let isV2 = fs.existsSync(asarPath) || fs.existsSync(`${asarPath}.rollback`) ||
         fs.existsSync(path.join(resourcesDir, 'app.asar.baseline.json'));
     let success = false;
-    const transaction = isV2 || hubConfig ? await import('./asar_transaction.mjs') : null;
+    let transaction = isV2 || hubConfig ? await import('./asar_transaction.mjs') : null;
+    if (!isV2) {
+        // 官方原版备份已移到安装目录外的仓库（见 asar_transaction.mjs 的 baselineStoreDir）
+        const tx = transaction || await import('./asar_transaction.mjs');
+        if (fs.existsSync(tx.baselinePointerPath(resourcesDir))) {
+            isV2 = true;
+            transaction = tx;
+        }
+    }
     const releaseLock = transaction ? transaction.acquireLock(resourcesDir) : null;
     try {
     if (isV2) transaction.preflightBaselineConsent(resourcesDir, { confirmUnverified });

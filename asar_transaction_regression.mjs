@@ -11,6 +11,8 @@ import { wrappedFs as asarFs } from './node_modules/@electron/asar/lib/wrapped-f
 import * as tx from './asar_transaction.mjs';
 
 const fixture = fs.mkdtempSync(path.join(os.tmpdir(), 'antigravity-asar-test-'));
+// 官方原版备份仓库放进测试目录，不碰真实的用户数据目录；子进程通过 env 继承
+process.env.AG_BASELINE_STORE = path.join(fixture, 'baseline-store');
 const source = path.join(fixture, 'source');
 const resources = path.join(fixture, 'resources');
 const live = path.join(resources, 'app.asar');
@@ -88,7 +90,7 @@ try {
     tx.acquireLock(resources)();
 
     assert.throws(() => tx.prepareBaseline(resources), /explicit confirmation/);
-    assert.equal(fs.existsSync(path.join(resources, 'app.asar.baseline.json')), false);
+    assert.equal(fs.existsSync(tx.baselinePointerPath(resources)), false);
     const backup = tx.prepareBaseline(resources, { confirmUnverified: true });
     const backupHash = hash(backup);
     const baselineSidecarDigest = tx.inspectArchive(backup).unpackedSha256;
@@ -97,12 +99,12 @@ try {
     assert.ok(fs.existsSync(`${backup}.unpacked`));
     assert.equal(JSON.parse(fs.readFileSync(`${backup}.json`, 'utf8')).source,
         'user-confirmed-unverified-live');
-    assert.equal(JSON.parse(fs.readFileSync(path.join(resources, 'app.asar.baseline.json'))).userConfirmedUnverified, true);
-    fs.writeFileSync(path.join(resources, 'app.asar.baseline.json'), JSON.stringify({ sha256: backupHash }));
-    const unconfirmedPointer = fs.readFileSync(path.join(resources, 'app.asar.baseline.json'));
+    assert.equal(JSON.parse(fs.readFileSync(tx.baselinePointerPath(resources))).userConfirmedUnverified, true);
+    fs.writeFileSync(tx.baselinePointerPath(resources), JSON.stringify({ sha256: backupHash }));
+    const unconfirmedPointer = fs.readFileSync(tx.baselinePointerPath(resources));
     assert.throws(() => tx.prepareBaseline(resources), /explicit confirmation/);
     assert.throws(() => tx.restore(resources), /explicit confirmation/);
-    assert.deepEqual(fs.readFileSync(path.join(resources, 'app.asar.baseline.json')), unconfirmedPointer);
+    assert.deepEqual(fs.readFileSync(tx.baselinePointerPath(resources)), unconfirmedPointer);
     assert.equal(hash(live), originalHash);
     assert.equal(hash(backup), backupHash);
     fs.copyFileSync(live, `${live}.rollback`);
@@ -123,7 +125,7 @@ try {
     fs.writeFileSync(`${backup}.json`, JSON.stringify(legacyMetadata));
     assert.throws(() => tx.restore(resources), /explicit confirmation/);
     tx.restore(resources, { confirmUnverified: true });
-    const pointerFile = path.join(resources, 'app.asar.baseline.json');
+    const pointerFile = tx.baselinePointerPath(resources);
     assert.equal(JSON.parse(fs.readFileSync(pointerFile)).userConfirmedUnverified, true);
     assert.match(JSON.parse(fs.readFileSync(pointerFile)).metadataSha256, /^[a-f0-9]{64}$/);
     assert.equal(JSON.parse(fs.readFileSync(`${backup}.json`)).source, 'user-confirmed-unverified-live');
@@ -158,7 +160,7 @@ try {
         { sha256: backupHash, userConfirmedUnverified: 'true' },
         { sha256: backupHash, userConfirmedUnverified: false }
     ]) {
-        fs.writeFileSync(path.join(resources, 'app.asar.baseline.json'), JSON.stringify(candidate));
+        fs.writeFileSync(tx.baselinePointerPath(resources), JSON.stringify(candidate));
         const beforeRejected = snapshot(resources);
         assert.throws(() => tx.prepareBaseline(resources));
         assert.throws(() => tx.restore(resources));
@@ -170,20 +172,20 @@ try {
     assert.deepEqual(snapshot(resources), beforeLegacyPointerReject);
     tx.restore(resources, { confirmUnverified: true });
     assert.match(JSON.parse(fs.readFileSync(pointerFile)).metadataSha256, /^[a-f0-9]{64}$/);
-    fs.writeFileSync(path.join(resources, 'app.asar.baseline.json'),
+    fs.writeFileSync(tx.baselinePointerPath(resources),
         JSON.stringify({ sha256: '0'.repeat(64), userConfirmedUnverified: true }));
     assert.throws(() => tx.restore(resources));
     assert.equal(hash(live), originalHash);
     assert.equal(hash(backup), backupHash);
-    fs.writeFileSync(path.join(resources, 'app.asar.baseline.json'), unconfirmedPointer);
+    fs.writeFileSync(tx.baselinePointerPath(resources), unconfirmedPointer);
     assert.equal(tx.prepareBaseline(resources, { confirmUnverified: true }), backup);
-    const pointerBeforeTamper = fs.readFileSync(path.join(resources, 'app.asar.baseline.json'));
+    const pointerBeforeTamper = fs.readFileSync(tx.baselinePointerPath(resources));
     fs.writeFileSync(path.join(source, 'dist', 'main.js'), 'third-party edit');
     const unsignedEdit = path.join(fixture, 'unsigned-edit.asar');
     await asar.createPackageWithOptions(source, unsignedEdit, { unpackDir: '{native,node_modules/pkg}' });
     fs.copyFileSync(unsignedEdit, live);
     assert.throws(() => tx.prepareBaseline(resources), /does not match confirmed baseline/);
-    assert.deepEqual(fs.readFileSync(path.join(resources, 'app.asar.baseline.json')), pointerBeforeTamper);
+    assert.deepEqual(fs.readFileSync(tx.baselinePointerPath(resources)), pointerBeforeTamper);
     tx.restore(resources);
     assert.equal(hash(live), originalHash);
     fs.writeFileSync(path.join(source, 'dist', 'main.js'), '/* main */');
@@ -202,7 +204,7 @@ try {
     fs.copyFileSync(backup, path.join(legacy, 'app.asar.bak'));
     fs.copyFileSync(backup, path.join(legacy, 'app.asar.official_backup'));
     assert.throws(() => tx.prepareBaseline(legacy), /explicit confirmation/);
-    assert.equal(fs.existsSync(path.join(legacy, 'app.asar.baseline.json')), false);
+    assert.equal(fs.existsSync(tx.baselinePointerPath(legacy)), false);
     const importedLegacy = tx.prepareBaseline(legacy, { confirmUnverified: true });
     assert.equal(hash(importedLegacy), backupHash);
     assert.equal(JSON.parse(fs.readFileSync(`${importedLegacy}.json`, 'utf8')).source,
@@ -311,7 +313,7 @@ try {
     assert.equal(busyRun.status, 75, busyRun.stderr);
     assert.match(busyRun.stderr, /ASAR_BUSY/);
     assert.equal(hash(integrationLive), localizedHash);
-    const integrationPointer = path.join(integrationResources, 'app.asar.baseline.json');
+    const integrationPointer = tx.baselinePointerPath(integrationResources);
     fs.writeFileSync(integrationPointer,
         JSON.stringify({ sha256: JSON.parse(fs.readFileSync(integrationPointer)).sha256 }));
     fs.copyFileSync(integrationLive, `${integrationLive}.rollback`);
@@ -336,7 +338,7 @@ try {
     assert.equal(restoreRun.status, 0, restoreRun.stderr);
     assert.equal(fs.existsSync(engineOrphan), false);
     assert.equal(hash(integrationLive), originalHash);
-    assert.ok(fs.existsSync(path.join(integrationResources, 'app.asar.baseline.json')));
+    assert.ok(fs.existsSync(tx.baselinePointerPath(integrationResources)));
     const runningShim = path.join(fixture, 'running-client.cjs');
     const taskkillMarker = path.join(fixture, 'unexpected-taskkill');
     fs.writeFileSync(runningShim, `Object.defineProperty(process, 'platform', { value: 'win32' });
@@ -653,7 +655,7 @@ cp.execFileSync = (command, args, options) => {
         { encoding: 'utf8' });
     assert.notEqual(crashRestore.status, 0);
     assert.equal(fs.existsSync(`${live}.restore.pending`), true);
-    const pendingPointer = path.join(resources, 'app.asar.baseline.json');
+    const pendingPointer = tx.baselinePointerPath(resources);
     fs.writeFileSync(pendingPointer, JSON.stringify({ sha256: backupHash }));
     fs.writeFileSync(`${backup}.json`, JSON.stringify({ ...JSON.parse(fs.readFileSync(`${backup}.json`)), source: 'unlocalized-live' }));
     const beforePendingReject = snapshot(resources);
@@ -873,7 +875,7 @@ cp.execFileSync = (command, args, options) => {
         assert.deepEqual(snapshot(mixedResources), beforePendingSweep);
         assert.equal(fs.readFileSync(pendingConfigStage, 'utf8'), 'recoverable stage');
         assert.equal(fs.readFileSync(pendingAsarStage, 'utf8'), 'unrelated orphan');
-        const mixedPointer = path.join(mixedResources, 'app.asar.baseline.json');
+        const mixedPointer = tx.baselinePointerPath(mixedResources);
         const confirmedMixedPointer = fs.readFileSync(mixedPointer);
         fs.writeFileSync(mixedPointer, JSON.stringify({ sha256: JSON.parse(confirmedMixedPointer).sha256 }));
         const beforeConfigReject = snapshot(mixedResources);
@@ -927,8 +929,48 @@ cp.execFileSync = (command, args, options) => {
         assert.equal(fs.readFileSync(captured, 'utf8'), specialDir);
         assert.equal(fs.existsSync(marker), false);
     }
+    // 旧版本把官方原版备份放在安装目录（resources）里。官方更新时旧卸载程序会把 resources 下的文件
+    // 挪进 %TEMP%\nsiXXXX.tmp\old-install，备份目录名太长导致路径超过 260 字符，卸载失败并误报
+    // "Antigravity 无法关闭"，永远无法更新。所以：旧布局必须整体迁移到仓库，安装目录里一个都不能留。
+    {
+        const legacyRes = path.join(fixture, 'legacy-layout', 'resources');
+        const legacySrc = path.join(fixture, 'legacy-layout', 'source');
+        fs.mkdirSync(path.join(legacySrc, 'native'), { recursive: true });
+        fs.mkdirSync(path.join(legacySrc, 'dist'), { recursive: true });
+        fs.mkdirSync(legacyRes, { recursive: true });
+        fs.writeFileSync(path.join(legacySrc, 'package.json'), JSON.stringify({ version: '2.18.1' }));
+        fs.writeFileSync(path.join(legacySrc, 'dist', 'preload.js'), '/* legacy preload */\n' + 'y'.repeat(2048));
+        fs.writeFileSync(path.join(legacySrc, 'native', 'addon.node'), 'legacy native bytes');
+        const legacyLive = path.join(legacyRes, 'app.asar');
+        await asar.createPackageWithOptions(legacySrc, legacyLive, { unpackDir: 'native' });
+        const isBaselineEntry = name => /^app\.asar\.baseline/.test(name);
+        const savedStore = process.env.AG_BASELINE_STORE;
+        try {
+            // 1) 先在一个临时仓库里生成合法备份，再原样挪回安装目录，模拟旧版本的布局
+            process.env.AG_BASELINE_STORE = path.join(fixture, 'legacy-old-store');
+            const oldStore = path.dirname(tx.prepareBaseline(legacyRes, { confirmUnverified: true }));
+            for (const name of fs.readdirSync(oldStore)) fs.renameSync(path.join(oldStore, name), path.join(legacyRes, name));
+            assert.deepEqual(fs.readdirSync(legacyRes).filter(isBaselineEntry).map(name => name.replace(/[a-f0-9]{64}/, '<sha>')).sort(),
+                ['app.asar.baseline-<sha>.bak', 'app.asar.baseline-<sha>.bak.json',
+                    'app.asar.baseline-<sha>.bak.unpacked', 'app.asar.baseline.json']);
+            // 2) 换成新的仓库根目录（相当于升级后第一次运行）：自动迁移，且不需要重新确认来源
+            const newRoot = path.join(fixture, 'legacy-new-store');
+            process.env.AG_BASELINE_STORE = newRoot;
+            tx.preflightBaselineConsent(legacyRes);
+            assert.deepEqual(fs.readdirSync(legacyRes).filter(isBaselineEntry), []);
+            const migrated = tx.prepareBaseline(legacyRes);
+            assert.ok(migrated.startsWith(newRoot + path.sep), migrated);
+            assert.equal(hash(migrated), hash(legacyLive));
+            assert.ok(fs.existsSync(`${migrated}.unpacked`));
+            assert.equal(tx.baselineStoreDir(legacyRes), path.dirname(migrated));
+        } finally {
+            process.env.AG_BASELINE_STORE = savedStore;
+        }
+    }
+    // 主流程（备份、注入、回滚、恢复）全部跑完后，安装目录里不能有任何 baseline 备份
+    assert.deepEqual(fs.readdirSync(resources).filter(name => /^app\.asar\.baseline/.test(name)), []);
     const macCheck = process.platform === 'win32' ? 'Darwin shim skipped on Windows' : 'Darwin process matching and .command argv';
-    console.log(`asar transaction regression: PASS (metadata digest, no-kill, ${macCheck}, ENOSPC, selective unpack, config/recovery, dead guard, busy 75, sidecar rescue)`);
+    console.log(`asar transaction regression: PASS (metadata digest, no-kill, ${macCheck}, ENOSPC, selective unpack, config/recovery, dead guard, busy 75, sidecar rescue, baseline outside install dir + legacy migration)`);
 } finally {
     fs.rmSync(fixture, { recursive: true, force: true });
 }
