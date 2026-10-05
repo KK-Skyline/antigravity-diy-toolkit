@@ -307,17 +307,15 @@ function generateJs() {
             if (!/^\d{1,20}$/.test(String(userCfg.workshopId))) throw new Error('Invalid workshopId');
             const weReader = require('./wallpaper_engine_reader');
             let wp = weReader.getActiveWallpaper(userCfg.monitor, userCfg.workshopId);
-            // 场景 / 图片壁纸：运行 2K 60FPS 超清预设管线。
-            // 视频壁纸不再转成动图（会截断时长、放大出颗粒、CPU 解码掉帧），运行时直接播放原视频。
-            if (!(wp && wp.type === 'video')) {
-                try {
-                    const prepScript = path.join(__dirname, 'prepare_hd_wallpaper.py');
-                    if (fs.existsSync(prepScript) && userCfg.workshopId) {
-                        child_process.execFileSync('python', [prepScript, String(userCfg.workshopId)], { stdio: 'ignore', windowsHide: true, shell: false });
-                        wp = weReader.getActiveWallpaper(userCfg.monitor, userCfg.workshopId);
-                    }
-                } catch (e) {}
-            }
+            // 预处理：场景壁纸合成高清原画（或提取嵌入视频），视频壁纸只补一张有内容的封面。
+            // 视频本身不再转成动图（会截断时长、放大出颗粒、CPU 解码掉帧），运行时直接播放原视频。
+            try {
+                const prepScript = path.join(__dirname, 'prepare_hd_wallpaper.py');
+                if (fs.existsSync(prepScript) && userCfg.workshopId) {
+                    child_process.execFileSync('python', [prepScript, String(userCfg.workshopId)], { stdio: 'ignore', windowsHide: true, shell: false });
+                    wp = weReader.getActiveWallpaper(userCfg.monitor, userCfg.workshopId);
+                }
+            } catch (e) {}
             // 质量关卡：选中的壁纸如果只剩 Wallpaper Engine 自带的低清缩略图（视频没下载完、也没有场景原画），
             // 铺满窗口只会是一片马赛克 —— 拒绝使用，继续保留上一张正常的壁纸。
             const lastGoodFile = path.join(__dirname, 'last_good_wallpaper.json');

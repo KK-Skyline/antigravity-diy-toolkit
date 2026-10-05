@@ -78,72 +78,6 @@ def find_wallpaper_dir(target):
         return cand
     return None
 
-def process_video_wallpaper(vpath, out_dir):
-    """利用 PyAV 解码视频并导出 2K 60FPS 动态 WebP 和 2K 高清封面"""
-    import av
-    print(f"[2K-60FPS] 正在处理视频壁纸: {os.path.basename(vpath)}")
-    container = av.open(vpath)
-    stream = container.streams.video[0]
-    
-    in_fps = float(stream.average_rate) if stream.average_rate else 30.0
-    print(f"  源视频信息: {stream.width}x{stream.height} @ {in_fps:.1f} fps, 编解码器: {stream.codec_context.name}")
-    
-    frames = []
-    first_hd_img = None
-    
-    # 抽取 120 帧 (或根据源视频长度适当循环)
-    step = max(1, round(in_fps / TARGET_FPS))
-    count = 0
-    
-    for packet in container.demux(stream):
-        for frame in packet.decode():
-            if count % step == 0:
-                img = frame.to_image().convert('RGB')
-                if first_hd_img is None:
-                    first_hd_img = img.resize((TARGET_W, TARGET_H), Image.Resampling.LANCZOS)
-                
-                # 调整到 2K 分辨率 (保持 16:9)
-                resized = img.resize((TARGET_W, TARGET_H), Image.Resampling.BILINEAR)
-                frames.append(resized)
-                if len(frames) >= NUM_FRAMES:
-                    break
-            count += 1
-        if len(frames) >= NUM_FRAMES:
-            break
-            
-    container.close()
-    
-    if not frames:
-        print("  !! 视频解码失败或未提取到有效帧")
-        return False
-        
-    # 如果视频较短帧数不够 120 帧，无缝往复/循环补齐
-    while len(frames) < NUM_FRAMES:
-        frames.extend(frames[:NUM_FRAMES - len(frames)])
-        
-    out_webp = os.path.join(out_dir, "preview_animated.webp")
-    out_hd = os.path.join(out_dir, "preview_hd.jpg")
-    
-    # 保存 2K 静态底图
-    if first_hd_img:
-        first_hd_img.save(out_hd, quality=95)
-        
-    # 保存 2K 60FPS 动态 WebP
-    print(f"  正在编码 2K 60FPS WebP ({len(frames)} 帧)...")
-    frames[0].save(
-        out_webp,
-        format='WEBP',
-        save_all=True,
-        append_images=frames[1:],
-        duration=DURATIONS[:len(frames)],
-        loop=0,
-        quality=75,
-        method=1
-    )
-    sz_mb = os.path.getsize(out_webp) / (1024 * 1024)
-    print(f"  √ 视频已升级为 2K 60FPS WebP! 文件大小: {sz_mb:.2f} MB")
-    return True
-
 # preview_hd.jpg 的生成算法版本。旧版本（取最大材质、丢弃透明通道）生成的原画会被自动重新生成。
 HD_META_VERSION = 2
 
@@ -353,14 +287,21 @@ def extract_scene_video(wp_dir, pkg_path):
 
 
 def write_video_poster(video_path, out_hd, at_seconds=1.0):
-    """截取视频约 1 秒处的一帧作为封面（视频加载完成前显示、也用于取色）"""
+    """截取视频约 1 秒处的一帧作为封面（视频加载完成前显示、也用于取色）。
+    很多视频开头是黑场：跳过空白帧，取之后第一张有内容的画面，最多找到第 15 秒。"""
     import av
-    img = None
+    img = last = None
     with av.open(video_path) as container:
         for frame in container.decode(container.streams.video[0]):
+            t = frame.time
+            if t is not None and t < at_seconds:
+                last = frame
+                continue
             img = frame.to_image()
-            if frame.time is None or frame.time >= at_seconds:
+            if t is None or t > 15 or not _is_blank(img):
                 break
+    if img is None and last is not None:  # 视频短于 at_seconds
+        img = last.to_image()
     if img is None:
         return False
     fit_16x9(img.convert("RGB")).save(out_hd, quality=92)
@@ -553,12 +494,25 @@ def prepare_hd_wallpaper(target):
                 break
                 
     if vpath:
-        # 如果已经存在 preview_animated.webp 且大小 > 500KB，跳过重复编码
-        webp_cand = os.path.join(wp_dir, "preview_animated.webp")
-        if os.path.isfile(webp_cand) and os.path.getsize(webp_cand) > 500000:
-            print("  √ 2K 60FPS 动态壁纸资源已就绪，无需重复生成。")
-            return True
-        return process_video_wallpaper(vpath, wp_dir)
+        # 视频壁纸运行时直接播放原视频（不再转动图）；这里只确保有一张有内容的封面，
+        # 用于视频加载完成前显示和取色。旧版本截的是第一帧，常常是黑场。
+        out_hd = os.path.join(wp_dir, "preview_hd.jpg")
+        try:
+            with Image.open(out_hd) as existing:
+                need_poster = _is_blank(existing)
+        except Exception:
+            need_poster = True
+        if need_poster:
+            if os.path.isfile(out_hd):
+                os.replace(out_hd, os.path.join(wp_dir, "preview_hd.blank-backup.jpg"))
+                print("  !! 已有的视频封面是空白图，已停用并重新截取")
+            try:
+                if write_video_poster(vpath, out_hd):
+                    write_hd_meta(wp_dir, "video")
+                    print("  √ 已从视频截取封面: preview_hd.jpg")
+            except Exception as e:
+                print(f"  !! 截取视频封面失败（不影响视频播放）: {e}")
+        return True
         
     # 2. 如果是 scene.pkg 场景壁纸
     scene_pkg = os.path.join(wp_dir, "scene.pkg")
