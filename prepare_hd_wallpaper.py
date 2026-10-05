@@ -202,6 +202,15 @@ def _mostly_transparent(img):
     return sum(hist[:20]) / (64 * 36) > 0.3
 
 
+def _is_blank(img):
+    """合成失败时得到的是几乎没有变化的图（纯黑 / 纯白 / 纯色）。
+    只看"变化幅度"，不看"亮不亮"：星空、暗色剪影、白底线稿这类很暗或很亮的真实画面不能被误判。"""
+    from PIL import ImageStat
+    g = img.convert("L").resize((128, 72))
+    lo, hi = g.getextrema()
+    return hi - lo < 12 or ImageStat.Stat(g).stddev[0] < 3
+
+
 def _vec(value, n, default):
     # 带脚本的属性形如 {"script": "...", "value": "1 1 1"}，取其中的静态值
     if isinstance(value, dict):
@@ -399,8 +408,19 @@ def process_scene_wallpaper(wp_dir):
     if os.path.isfile(out_webp) and os.path.getsize(out_webp) > 100000:
         return True
     if os.path.isfile(out_hd) and hd_meta_version(wp_dir) >= HD_META_VERSION:
-        return True
-        
+        try:
+            with Image.open(out_hd) as existing:
+                if not _is_blank(existing):
+                    return True
+            print("  !! 已有的 preview_hd.jpg 是空白图，停用并重新生成")
+            try:
+                os.replace(out_hd, os.path.join(wp_dir, "preview_hd.blank-backup.jpg"))
+            except Exception as e:
+                print(f"  !! 停用空白图失败: {e}")
+        except Exception as e:
+            # 已有原画打不开（损坏 / 写了一半）：重新生成，而不是继续沿用坏文件
+            print(f"  !! 已有的 preview_hd.jpg 无法读取（{e}），重新生成")
+
     print(f"[2K-60FPS] 正在从 scene.pkg 提取超清材质: {pkg_path}")
     import extract_scene_pkg
     
@@ -411,6 +431,9 @@ def process_scene_wallpaper(wp_dir):
         best_img = composite_scene(pkg_path)
     except Exception as e:
         print(f"  !! 场景图层合成失败，改用最大材质: {e}")
+    if best_img is not None and _is_blank(best_img):
+        print("  !! 场景图层合成结果是空白图，改用最大材质")
+        best_img = None
     magic, entries, data_start = extract_scene_pkg.parse_pkg(pkg_path)
     # 兜底：取最大的"不透明"材质（跳过大部分透明的人物层 / 贴纸层）
     best_pixel_count = float("inf") if best_img is not None else 0
@@ -449,6 +472,9 @@ def process_scene_wallpaper(wp_dir):
             except Exception as e:
                 pass
                 
+    if best_img is not None and _is_blank(best_img):
+        print("  !! 提取到的材质也是空白图，放弃生成 preview_hd.jpg，沿用官方预览图")
+        best_img = None
     if best_img:
         print(f"  提取到最大场景材质: {best_img.width}x{best_img.height}")
         # 居中裁成 16:9，不拉伸；大于 2K 才缩小
