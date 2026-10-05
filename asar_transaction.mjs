@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import * as asar from '@electron/asar';
@@ -8,10 +9,12 @@ const literalGlob = name => escapeGlob(name).replaceAll(',', '\\,');
 const SIGNATURE = '/* --- ANTIGRAVITY CHINESE LOCALIZATION START --- */';
 const SHA = /^[a-f0-9]{64}$/;
 const livePath = dir => path.join(dir, 'app.asar');
-const pointerPath = dir => path.join(dir, 'app.asar.baseline.json');
+const pointerPath = dir => path.join(baselineStoreDir(dir), 'app.asar.baseline.json');
 const restoreMarkerPath = dir => path.join(dir, 'app.asar.restore.pending');
 const configMarkerPath = dir => path.join(dir, 'app.asar.config.pending');
-const backupPath = (dir, sha) => path.join(dir, `app.asar.baseline-${sha}.bak`);
+const backupPath = (dir, sha) => path.join(baselineStoreDir(dir), `app.asar.baseline-${sha}.bak`);
+export const baselinePointerPath = dir => pointerPath(dir);
+export const baselineBackupPath = (dir, sha) => backupPath(dir, sha);
 const hashFile = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 const unique = () => `${process.pid}-${crypto.randomUUID()}`;
 const busyError = message => Object.assign(new Error(message), { code: 'ASAR_BUSY' });
@@ -23,6 +26,72 @@ function processAlive(pid) {
         if (error.code === 'EPERM') return true;
         throw error;
     }
+}
+
+// ---------- 官方原版备份（baseline）放在安装目录之外 ----------
+// Antigravity 官方更新时，旧版卸载程序会先把 resources\ 下的所有文件挪进 %TEMP%\nsiXXXX.tmp\old-install。
+// 备份的 app.asar.baseline-<64位哈希>.bak.unpacked 目录名很长，挪过去后大量路径超过 260 字符，
+// 卸载失败，并误报"Antigravity 无法关闭，请手动关闭它"，导致永远无法更新。
+// 所以备份放进用户数据目录下的独立仓库，每个安装目录一个子目录（安装路径的哈希前 16 位）。
+// 测试或特殊环境可用 AG_BASELINE_STORE 指定仓库根目录。
+function baselineRoot() {
+    if (process.env.AG_BASELINE_STORE) return path.resolve(process.env.AG_BASELINE_STORE);
+    const home = os.homedir();
+    if (process.platform === 'win32') {
+        return path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'antigravity2-cn', 'baselines');
+    }
+    if (process.platform === 'darwin') return path.join(home, 'Library', 'Application Support', 'antigravity2-cn', 'baselines');
+    return path.join(process.env.XDG_DATA_HOME || path.join(home, '.local', 'share'), 'antigravity2-cn', 'baselines');
+}
+
+const LEGACY_BASELINE_ENTRY = /^app\.asar\.baseline(\.json|-[a-f0-9]{64}\.bak(\.json|\.unpacked)?)$/;
+const migratedStores = new Set();
+
+export function baselineStoreDir(dir) {
+    const resolved = fs.existsSync(dir) ? fs.realpathSync.native(dir) : path.resolve(dir);
+    const key = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
+    const store = path.join(baselineRoot(), crypto.createHash('sha256').update(key).digest('hex').slice(0, 16));
+    if (!migratedStores.has(store)) {
+        migrateLegacyBaseline(resolved, store);
+        migratedStores.add(store);
+    }
+    return store;
+}
+
+function moveEntry(from, to) {
+    try {
+        fs.renameSync(from, to);
+    } catch (error) {
+        if (error.code !== 'EXDEV') throw error;
+        const temp = `${to}.new-${unique()}`;
+        try {
+            fs.cpSync(from, temp, { recursive: true, errorOnExist: true, force: false });
+            fs.renameSync(temp, to);
+        } finally {
+            if (fs.existsSync(temp)) fs.rmSync(temp, { recursive: true });
+        }
+        fs.rmSync(from, { recursive: true });
+    }
+}
+
+// 旧版本把备份放在安装目录里：搬进仓库。指针文件最后搬，中途中断时下次运行会继续。
+// 备份文件名带内容哈希，仓库里已有同名文件说明内容相同，安装目录里的副本直接删掉；
+// 仓库里已有指针时以仓库为准（它是更新后写的）。
+function migrateLegacyBaseline(dir, store) {
+    if (!fs.existsSync(dir) || path.resolve(dir) === path.resolve(store)) return;
+    const legacy = fs.readdirSync(dir).filter(name => LEGACY_BASELINE_ENTRY.test(name))
+        .sort((a, b) => (a === 'app.asar.baseline.json') - (b === 'app.asar.baseline.json'));
+    if (!legacy.length) return;
+    fs.mkdirSync(store, { recursive: true });
+    for (const name of legacy) {
+        const from = path.join(dir, name);
+        const to = path.join(store, name);
+        if (fs.existsSync(to)) fs.rmSync(from, { recursive: true });
+        else moveEntry(from, to);
+    }
+    syncDir(store);
+    syncDir(dir);
+    console.warn(`[备份] 已把官方原版备份从安装目录迁移到: ${store}`);
 }
 
 function syncFile(file) {
@@ -283,6 +352,8 @@ function saveBaseline(dir, source, sidecar, label) {
     if (info.localized) throw new Error('Refusing localized ASAR as clean baseline');
     const sha = hashFile(source);
     const target = backupPath(dir, sha);
+    const store = path.dirname(target);
+    fs.mkdirSync(store, { recursive: true });
     if (!fs.existsSync(target)) {
         const temp = `${target}.new-${unique()}`;
         try {
@@ -294,7 +365,7 @@ function saveBaseline(dir, source, sidecar, label) {
             if (info.unpacked.length) syncSidecar(`${temp}.unpacked`, info.unpacked);
             fs.renameSync(temp, target);
             if (info.unpacked.length) fs.renameSync(`${temp}.unpacked`, `${target}.unpacked`);
-            syncDir(dir);
+            syncDir(store);
         } finally {
             if (fs.existsSync(temp)) fs.unlinkSync(temp);
             if (fs.existsSync(`${temp}.unpacked`)) fs.rmSync(`${temp}.unpacked`, { recursive: true });
@@ -309,7 +380,7 @@ function saveBaseline(dir, source, sidecar, label) {
             }
             syncSidecar(stagedSidecar, info.unpacked);
             fs.renameSync(stagedSidecar, `${target}.unpacked`);
-            syncDir(dir);
+            syncDir(store);
         } finally {
             if (fs.existsSync(stagedSidecar)) fs.rmSync(stagedSidecar, { recursive: true });
         }
