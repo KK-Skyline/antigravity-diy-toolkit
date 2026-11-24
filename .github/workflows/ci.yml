@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches:
+      - main
+      - 'fix/**'
+      - 'feat/**'
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }}, Node ${{ matrix.node }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        node: ['22.12.0']
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --omit=dev
+
+      - name: Verify simplified & traditional dictionary alignment
+        run: node tools/compare_dicts.js
+
+      - name: Run Antigravity 2.34.0 adaptation regression
+        run: node tools/adapt_2_34_regression.mjs
+
+      - name: Run ASAR transaction regression
+        run: node asar_transaction_regression.mjs
+
+      - name: Run Wallpaper Hub security regression
+        run: node security_regression.js
