@@ -131,9 +131,11 @@ body[data-has-browser-hole="true"] > #ag-rain-canvas {
   opacity: 0 !important;
   transition: opacity .2s ease !important;
 }
-body[data-has-browser-hole="true"] .agy-inset-shell,
-body[data-has-browser-hole="true"] .bg-\[var\(--shell-canvas\)\] {
-  --shell-canvas: #0b0f12 !important;
+body[data-has-browser-hole="true"] .agy-inset-shell {
+  --shell-canvas: transparent !important;
+  background-color: transparent !important;
+}
+body[data-has-browser-hole="true"] .bg-\[var\(--shell-canvas\)\]:not(:has([data-browser-hole]:not([data-browser-hole="false"]))) {
   background-color: #0b0f12 !important;
 }
 body[data-has-browser-hole="true"] :is(.agy-sheet[data-sheet-inset] [data-main-content-body], .agy-inset-shell [data-side-panel-body]):not([data-browser-hole]):not(:has([data-browser-hole]:not([data-browser-hole="false"]))) {

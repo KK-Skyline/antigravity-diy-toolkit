@@ -11,7 +11,7 @@
   - `dist/tray.js`：正则适配 `createTray(actions, onClick)`，新增 `insertTrayMenuItem` 动态 WSL 项翻译，双击唤起兼容 `BaseWindow`；
   - `dist/menu.js`：新增 WSL 菜单译文，并修复 `addItemToSubmenu(menu, 'File', ...)` 在菜单汉化后找不到“文件”菜单的问题；
   - `dist/loadingOverlay.js`：2.34.0 为纯 SVG 图标加载页，无文本节点时自动跳过。
-- **词典与调试工具**：简繁双语增补 114 条 2.34.0 新增高频界面词条（自动化、WSL/远程、扩展包、钩子、底部终端、内置浏览器等）并通过 `tools/compare_dicts.js` 校验；`tools/agcdp.js` 兼容 `DevToolsActivePort` 及 2.34+ `--remote-debugging-port=9222` 提示；`tools/check-wallpaper.js` 增加 `.agy-shell` / `.agy-inset-shell` / `.surface-composer-card` 透明诊断。
+- **词典与调试工具**：简繁双语增补 97 条 2.34.0 新增高频界面词条（自动化、WSL/远程、内置浏览器、连接器、钩子、底部终端等，零大小写冲突）并通过 `tools/compare_dicts.js` 校验；`tools/agcdp.js` 兼容 `DevToolsActivePort` 及 2.34+ `--remote-debugging-port=9222` 提示；`tools/check-wallpaper.js` 增加 `.agy-shell` / `.agy-inset-shell` / `.surface-composer-card` 透明诊断。
 
 ---
 
