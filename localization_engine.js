@@ -219,13 +219,13 @@ const {
 // ==========================================
 // Antigravity 2.0 汉化引擎 (ASAR打包注入模式)
 // ==========================================
-async function install20(resourcesDir, transaction, confirmUnverified, configPlan) {
+async function install20(resourcesDir, transaction, confirmUnverified, configPlan, txCtx = null) {
     const asarPath = path.join(resourcesDir, "app.asar");
     if (!fs.existsSync(asarPath)) {
         console.error(`[错误] 未在资源目录中找到 app.asar: ${resourcesDir}`);
         return false;
     }
-    const baseline = transaction.prepareBaseline(resourcesDir, { confirmUnverified });
+    const baseline = transaction.prepareBaseline(resourcesDir, { confirmUnverified, txCtx });
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'antigravity-asar-'));
     try {
         transaction.extractBaseline(baseline, tempDir);
@@ -266,7 +266,7 @@ async function install20(resourcesDir, transaction, confirmUnverified, configPla
 
     // 4. 重新打包
     console.log(`[打包] 正在将修改后的内容打包回 app.asar...`);
-    await transaction.packAndReplace(resourcesDir, tempDir, baseline, configPlan);
+    await transaction.packAndReplace(resourcesDir, tempDir, baseline, configPlan, txCtx);
 
     cleanElectronCache();
     resignAppOnMac(resourcesDir);
@@ -489,7 +489,8 @@ async function main() {
     }
     const releaseLock = transaction ? transaction.acquireLock(resourcesDir) : null;
     try {
-    if (isV2) transaction.preflightBaselineConsent(resourcesDir, { confirmUnverified });
+    const txCtx = transaction && transaction.createTransactionContext ? transaction.createTransactionContext() : null;
+    if (isV2) transaction.preflightBaselineConsent(resourcesDir, { confirmUnverified, txCtx });
     wasAppRunning = checkIfAppIsRunning(installDir);
     if (wasAppRunning && noKill) {
         throw new Error('Antigravity 正在运行；请先手动关闭，或明确使用 --close-app。');
@@ -501,7 +502,7 @@ async function main() {
     if (isV2) {
         if (checkIfAppIsRunning(installDir)) throw new Error('Antigravity 在锁定后重新启动，已停止写入。');
         transaction.recover(resourcesDir, { rescueSidecar: huifu,
-            configFile: path.join(__dirname, 'wallpaper_config.json'), confirmUnverified });
+            configFile: path.join(__dirname, 'wallpaper_config.json'), confirmUnverified, txCtx });
         transaction.cleanupOrphanStages(resourcesDir, path.join(__dirname, 'wallpaper_config.json'));
     }
     let configPlan = null;
@@ -526,7 +527,7 @@ async function main() {
     } else {
         console.log("====== 正在安装 Antigravity 中文汉化 ======");
         if (isV2) {
-            success = await install20(resourcesDir, transaction, confirmUnverified, configPlan);
+            success = await install20(resourcesDir, transaction, confirmUnverified, configPlan, txCtx);
         } else {
             success = install10(installDir);
         }

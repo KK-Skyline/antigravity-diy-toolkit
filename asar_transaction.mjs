@@ -141,47 +141,109 @@ function sidecarHash(sidecar, files) {
     return digest.digest('hex');
 }
 
+export function createTransactionContext() {
+    return {
+        consentChecked: new Set(),
+        baselines: new Map(),
+        liveUnpackedSha256: null
+    };
+}
+
+function inspectBaselineWithCtx(file, txCtx) {
+    if (!txCtx) {
+        return { info: inspectArchive(file), sha256: hashFile(file) };
+    }
+    const st = fs.statSync(file);
+    const key = `${file}|${st.size}|${st.mtimeMs}`;
+    let entry = txCtx.baselines.get(key);
+    if (!entry) {
+        entry = { info: inspectArchive(file), sha256: hashFile(file) };
+        txCtx.baselines.set(key, entry);
+    }
+    return entry;
+}
+
 export function inspectArchive(file, sidecar = `${file}.unpacked`) {
-    if (!fs.statSync(file).isFile() || fs.statSync(file).size < 1024) throw new Error(`Invalid ASAR size: ${file}`);
+    const stat = fs.statSync(file);
+    if (!stat.isFile() || stat.size < 1024) throw new Error(`Invalid ASAR size: ${file}`);
     asar.uncache(file);
-    const entries = asar.listPackage(file, { isPack: true }).map(entry => entry.replaceAll('\\', '/'));
-    if (!entries.some(entry => entry.endsWith(' : /dist/preload.js'))) throw new Error(`ASAR missing preload: ${file}`);
-    const unpackedDirs = entries.filter(entry => entry.startsWith('unpack : '))
-        .map(entry => entry.slice('unpack : /'.length))
-        .filter(name => 'files' in asar.statFile(file, name.split('/').join(path.sep))).sort();
-    const unpacked = entries.filter(entry => entry.startsWith('unpack : '))
-        .map(entry => entry.slice('unpack : /'.length))
-        .filter(name => !('files' in asar.statFile(file, name.split('/').join(path.sep)))).sort();
-    const unpackedSha256 = sidecarHash(sidecar, unpacked);
-    for (const entry of entries) {
-        const name = entry.slice(entry.indexOf(' : /') + 4);
-        const archiveName = name.split('/').join(path.sep);
-        const info = asar.statFile(file, archiveName);
-        if ('files' in info || 'link' in info) continue;
-        if (!info.unpacked) {
-            const bytes = asar.extractFile(file, archiveName);
-            if (bytes.length !== info.size ||
-                (info.integrity?.hash && crypto.createHash('sha256').update(bytes).digest('hex') !== info.integrity.hash)) {
-                throw new Error(`Packed ASAR entry mismatch: ${name}`);
+    const { header, headerSize } = asar.getRawHeader(file);
+    const raw = fs.readFileSync(file);
+    const dataStart = 8 + headerSize;
+    if (dataStart > raw.length || !header || typeof header.files !== 'object' || header.files === null) {
+        throw new Error(`Invalid ASAR header: ${file}`);
+    }
+
+    const unpackedDirs = [];
+    const unpackedEntries = [];
+    let preloadBuf = null;
+    let pkgBuf = null;
+
+    const walk = (filesObj, prefix) => {
+        for (const [entryName, info] of Object.entries(filesObj)) {
+            const relPath = prefix ? `${prefix}/${entryName}` : entryName;
+            if ('files' in info) {
+                if (info.unpacked) unpackedDirs.push(relPath);
+                walk(info.files, relPath);
+                continue;
             }
-            continue;
+            if ('link' in info) continue;
+            if (info.unpacked) {
+                unpackedEntries.push({ name: relPath, info });
+                continue;
+            }
+            const offset = Number(info.offset);
+            if (!Number.isSafeInteger(offset) || offset < 0 ||
+                !Number.isSafeInteger(info.size) || info.size < 0 ||
+                dataStart + offset + info.size > raw.length) {
+                throw new Error(`Packed ASAR entry mismatch: ${relPath}`);
+            }
+            const slice = raw.subarray(dataStart + offset, dataStart + offset + info.size);
+            if (info.integrity?.hash &&
+                crypto.createHash('sha256').update(slice).digest('hex') !== info.integrity.hash) {
+                throw new Error(`Packed ASAR entry mismatch: ${relPath}`);
+            }
+            if (relPath === 'dist/preload.js') preloadBuf = slice;
+            else if (relPath === 'package.json') pkgBuf = slice;
         }
-        const integrity = info.integrity;
-        if (integrity?.hash && hashFile(path.join(sidecar, name)) !== integrity.hash) {
+    };
+    walk(header.files, '');
+
+    if (!preloadBuf) throw new Error(`ASAR missing preload: ${file}`);
+    if (!preloadBuf.length) throw new Error(`Empty ASAR preload: ${file}`);
+    if (!pkgBuf) throw new Error(`Missing ASAR version: ${file}`);
+    const pkg = JSON.parse(pkgBuf.toString());
+    if (typeof pkg.version !== 'string' || !pkg.version) throw new Error(`Missing ASAR version: ${file}`);
+
+    unpackedDirs.sort();
+    unpackedEntries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
+    const digest = crypto.createHash('sha256');
+    const root = unpackedEntries.length ? fs.realpathSync(sidecar) : null;
+    const unpacked = [];
+    for (const { name, info } of unpackedEntries) {
+        if (name.split(/[\\/]/).includes('..') || path.isAbsolute(name) || name.includes(':')) {
+            throw new Error(`Unsafe unpacked path: ${name}`);
+        }
+        const absFile = path.join(sidecar, name);
+        if (!fs.lstatSync(absFile).isFile() || !fs.realpathSync(absFile).startsWith(root + path.sep)) {
+            throw new Error(`Unsafe unpacked file: ${absFile}`);
+        }
+        const fileSha = hashFile(absFile);
+        if (info.integrity?.hash && fileSha !== info.integrity.hash) {
             throw new Error(`Unpacked ASAR entry hash mismatch: ${name}`);
         }
+        digest.update(name).update('\0').update(fileSha).update('\0');
+        unpacked.push(name);
     }
-    const preload = asar.extractFile(file, 'dist/preload.js');
-    if (!preload.length) throw new Error(`Empty ASAR preload: ${file}`);
-    const pkg = JSON.parse(asar.extractFile(file, 'package.json').toString());
-    if (typeof pkg.version !== 'string' || !pkg.version) throw new Error(`Missing ASAR version: ${file}`);
+
     return {
-        size: fs.statSync(file).size,
+        size: raw.length,
         version: pkg.version,
-        localized: preload.includes(SIGNATURE),
+        localized: preloadBuf.includes(SIGNATURE),
         unpacked,
         unpackedDirs,
-        unpackedSha256
+        unpackedSha256: digest.digest('hex')
     };
 }
 
@@ -288,7 +350,7 @@ function readPointer(dir) {
     return pointer;
 }
 
-function verifyBaseline(dir, sha, { allowLegacySource = false } = {}) {
+function verifyBaseline(dir, sha, { allowLegacySource = false, txCtx = null } = {}) {
     if (!SHA.test(sha)) throw new Error('Invalid ASAR baseline pointer');
     const file = backupPath(dir, sha);
     const meta = JSON.parse(fs.readFileSync(`${file}.json`, 'utf8'));
@@ -300,8 +362,8 @@ function verifyBaseline(dir, sha, { allowLegacySource = false } = {}) {
         (!BASELINE_SOURCES.has(meta.source) && !(allowLegacySource && legacySource))) {
         throw new Error('Invalid ASAR baseline metadata');
     }
-    const info = inspectArchive(file);
-    if (info.localized || meta.sha256 !== sha || hashFile(file) !== sha ||
+    const { info, sha256: fileSha } = inspectBaselineWithCtx(file, txCtx);
+    if (info.localized || meta.sha256 !== sha || fileSha !== sha ||
         meta.version !== info.version || meta.size !== info.size ||
         meta.unpackedSha256 !== info.unpackedSha256) {
         throw new Error(`ASAR baseline verification failed: ${file}`);
@@ -309,8 +371,8 @@ function verifyBaseline(dir, sha, { allowLegacySource = false } = {}) {
     return { file, info, meta, legacySource };
 }
 
-function verifiedConfirmedBaseline(dir, { sha256, metadataSha256, userConfirmedUnverified }, confirmUnverified) {
-    const baseline = verifyBaseline(dir, sha256, { allowLegacySource: confirmUnverified && !metadataSha256 });
+function verifiedConfirmedBaseline(dir, { sha256, metadataSha256, userConfirmedUnverified }, confirmUnverified, txCtx = null) {
+    const baseline = verifyBaseline(dir, sha256, { allowLegacySource: confirmUnverified && !metadataSha256, txCtx });
     if (metadataSha256 && metadataSha256 !== metadataDigest(baseline.meta)) {
         throw new Error('ASAR baseline metadata digest mismatch');
     }
@@ -331,9 +393,11 @@ function verifiedConfirmedBaseline(dir, { sha256, metadataSha256, userConfirmedU
     return baseline;
 }
 
-export function preflightBaselineConsent(dir, { confirmUnverified = false } = {}) {
+export function preflightBaselineConsent(dir, { confirmUnverified = false, txCtx = null } = {}) {
+    if (txCtx && txCtx.consentChecked.has(dir)) return;
     if (!fs.existsSync(pointerPath(dir))) {
         if (!confirmUnverified) throw new Error('New ASAR baseline requires explicit confirmation of unverified provenance');
+        if (txCtx) txCtx.consentChecked.add(dir);
         return;
     }
     const pointer = readPointer(dir);
@@ -341,10 +405,11 @@ export function preflightBaselineConsent(dir, { confirmUnverified = false } = {}
         throw new Error('Existing ASAR baseline requires explicit confirmation of unverified provenance');
     }
     const baseline = verifyBaseline(dir, pointer.sha256,
-        { allowLegacySource: confirmUnverified && !pointer.metadataSha256 });
+        { allowLegacySource: confirmUnverified && !pointer.metadataSha256, txCtx });
     if (pointer.metadataSha256 && pointer.metadataSha256 !== metadataDigest(baseline.meta)) {
         throw new Error('ASAR baseline metadata digest mismatch');
     }
+    if (txCtx) txCtx.consentChecked.add(dir);
 }
 
 function saveBaseline(dir, source, sidecar, label) {
@@ -410,11 +475,12 @@ function importLegacy(dir, version, confirmUnverified) {
     return saveBaseline(dir, first, `${livePath(dir)}.unpacked`, 'user-confirmed-unverified-legacy-pair');
 }
 
-export function prepareBaseline(dir, { confirmUnverified = false } = {}) {
-    preflightBaselineConsent(dir, { confirmUnverified });
+export function prepareBaseline(dir, { confirmUnverified = false, txCtx = null } = {}) {
+    preflightBaselineConsent(dir, { confirmUnverified, txCtx });
     if (fs.existsSync(configMarkerPath(dir))) throw new Error('Unresolved ASAR config transaction exists');
     const live = livePath(dir);
     const info = inspectArchive(live);
+    if (txCtx) txCtx.liveUnpackedSha256 = info.unpackedSha256;
     const pointer = pointerPath(dir);
     if (!fs.existsSync(pointer)) {
         if (!confirmUnverified) throw new Error('New ASAR baseline requires explicit confirmation of unverified provenance');
@@ -422,7 +488,7 @@ export function prepareBaseline(dir, { confirmUnverified = false } = {}) {
             saveBaseline(dir, live, `${live}.unpacked`, 'user-confirmed-unverified-live');
     }
     const pointerInfo = readPointer(dir);
-    const baseline = verifiedConfirmedBaseline(dir, pointerInfo, confirmUnverified);
+    const baseline = verifiedConfirmedBaseline(dir, pointerInfo, confirmUnverified, txCtx);
     const { sha256 } = pointerInfo;
     if (!info.localized) {
         if (hashFile(live) === sha256 && info.unpackedSha256 === baseline.info.unpackedSha256) return baseline.file;
@@ -485,10 +551,10 @@ function recoverPendingConfig(dir, configFile) {
     if (discarded) fs.unlinkSync(discarded);
 }
 
-export function recover(dir, { rescueSidecar = false, configFile = null, confirmUnverified = false } = {}) {
-    preflightBaselineConsent(dir, { confirmUnverified });
+export function recover(dir, { rescueSidecar = false, configFile = null, confirmUnverified = false, txCtx = null } = {}) {
+    preflightBaselineConsent(dir, { confirmUnverified, txCtx });
     if (confirmUnverified && fs.existsSync(pointerPath(dir))) {
-        verifiedConfirmedBaseline(dir, readPointer(dir), true);
+        verifiedConfirmedBaseline(dir, readPointer(dir), true, txCtx);
     }
     recoverPendingConfig(dir, configFile);
     if (fs.existsSync(restoreMarkerPath(dir))) recoverPendingRestore(dir);
@@ -626,10 +692,10 @@ function recoverPendingRestore(dir) {
     for (const failed of discarded) fs.rmSync(failed, { recursive: true });
 }
 
-function replace(dir, next, keepRollback = false) {
+function replace(dir, next, keepRollback = false, { alreadyInspectedNext = false } = {}) {
     const live = livePath(dir);
     const rollback = `${live}.rollback`;
-    inspectArchive(next, `${live}.unpacked`);
+    if (!alreadyInspectedNext) inspectArchive(next, `${live}.unpacked`);
     if (fs.existsSync(rollback)) throw new Error('Unresolved ASAR rollback exists');
     if (!fs.existsSync(live)) {
         if (keepRollback) throw new Error('Cannot commit ASAR/config pair without a live rollback source');
@@ -668,9 +734,9 @@ function asarUnpackFilesGlob(files, extracted) {
     return patterns.length === 1 ? patterns[0] : patterns.length ? `{${patterns.join(',')}}` : undefined;
 }
 
-export async function packAndReplace(dir, extracted, baseline, config = null) {
-    preflightBaselineConsent(dir);
-    const original = inspectArchive(baseline);
+export async function packAndReplace(dir, extracted, baseline, config = null, txCtx = null) {
+    preflightBaselineConsent(dir, { txCtx });
+    const { info: original } = inspectBaselineWithCtx(baseline, txCtx);
     const next = path.join(dir, `app.asar.new-${unique()}`);
     let configStage = null;
     const configFile = config ? path.resolve(config.file) : null;
@@ -688,7 +754,8 @@ export async function packAndReplace(dir, extracted, baseline, config = null) {
             packed.unpackedSha256 !== original.unpackedSha256) {
             throw new Error('Repacked ASAR layout/version differs from baseline');
         }
-        if (packed.unpackedSha256 !== inspectArchive(livePath(dir)).unpackedSha256) {
+        const liveUnpackedSha = txCtx?.liveUnpackedSha256 || inspectArchive(livePath(dir)).unpackedSha256;
+        if (packed.unpackedSha256 !== liveUnpackedSha) {
             throw new Error('Installed unpacked sidecar changed');
         }
         if (fs.existsSync(`${next}.unpacked`)) fs.rmSync(`${next}.unpacked`, { recursive: true });
@@ -708,7 +775,7 @@ export async function packAndReplace(dir, extracted, baseline, config = null) {
             markerWritten = true;
         }
         try {
-            replace(dir, next, !!config);
+            replace(dir, next, !!config, { alreadyInspectedNext: true });
             if (config) {
                 fs.renameSync(configStage, configFile);
                 syncDir(path.dirname(configFile));
