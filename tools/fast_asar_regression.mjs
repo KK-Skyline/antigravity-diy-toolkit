@@ -112,6 +112,46 @@ async function runTests() {
             assert.equal(newInfo.unpackedSha256, origInfo.unpackedSha256);
         }
 
+        // 1b. Short-write (multi-buffer partial writevSync <= 7 bytes) integrity test
+        {
+            const fShort = path.join(tmp, 'short-write');
+            const { resourcesDir, bigBuf } = await createSyntheticAsar(fShort);
+            const baseline = tx.prepareBaseline(resourcesDir, { confirmUnverified: true });
+            const outAsar = path.join(fShort, 'short-out.asar');
+            const newPreload = Buffer.from(`${SIGNATURE_START}\nconsole.log("short-write");\n${SIGNATURE_END}\n`);
+            const origWritevSync = fs.writevSync;
+            let shortCalls = 0;
+            fs.writevSync = (fd, iovs) => {
+                shortCalls++;
+                const first = iovs[0];
+                const chunk = first.length > 7 ? first.subarray(0, 7) : first;
+                return origWritevSync(fd, [chunk]);
+            };
+            try {
+                buildPatchedAsar(baseline, new Map([['dist/preload.js', newPreload]]), outAsar);
+            } finally {
+                fs.writevSync = origWritevSync;
+            }
+            assert.ok(shortCalls > 10, 'expected multiple short writevSync calls');
+            asar.uncache(outAsar);
+            assert.deepEqual(asar.extractFile(outAsar, path.join('dist', 'preload.js')), newPreload);
+            assert.deepEqual(asar.extractFile(outAsar, path.join('node_modules', 'demo-pkg', 'big.bin')), bigBuf);
+            assert.deepEqual(asar.statFile(outAsar, path.join('dist', 'preload.js')).integrity, computeIntegrity(newPreload));
+            assert.deepEqual(asar.statFile(outAsar, path.join('node_modules', 'demo-pkg', 'big.bin')).integrity, computeIntegrity(bigBuf));
+        }
+
+        // 1c. preflightBaselineConsent must not cache consent before pointer exists
+        {
+            const fConsent = path.join(tmp, 'consent-no-pointer');
+            fs.mkdirSync(fConsent, { recursive: true });
+            const consentTxCtx = tx.createTransactionContext();
+            tx.preflightBaselineConsent(fConsent, { confirmUnverified: true, txCtx: consentTxCtx });
+            assert.throws(
+                () => tx.preflightBaselineConsent(fConsent, { confirmUnverified: false, txCtx: consentTxCtx }),
+                /New ASAR baseline requires explicit confirmation/
+            );
+        }
+
         // 2. Fail-Closed security tests
         {
             const f2 = path.join(tmp, 'fail-closed');

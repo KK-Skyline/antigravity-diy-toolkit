@@ -398,7 +398,6 @@ export function preflightBaselineConsent(dir, { confirmUnverified = false, txCtx
     if (txCtx && txCtx.consentChecked.has(dir)) return;
     if (!fs.existsSync(pointerPath(dir))) {
         if (!confirmUnverified) throw new Error('New ASAR baseline requires explicit confirmation of unverified provenance');
-        if (txCtx) txCtx.consentChecked.add(dir);
         return;
     }
     const pointer = readPointer(dir);
@@ -693,16 +692,23 @@ function recoverPendingRestore(dir) {
     for (const failed of discarded) fs.rmSync(failed, { recursive: true });
 }
 
-function replace(dir, next, keepRollback = false, { alreadyInspectedNext = false } = {}) {
+function replace(dir, next, keepRollback = false, { alreadyInspectedNext = false, verifiedNextSha256 = null } = {}) {
     const live = livePath(dir);
     const rollback = `${live}.rollback`;
     if (!alreadyInspectedNext) inspectArchive(next, `${live}.unpacked`);
     if (fs.existsSync(rollback)) throw new Error('Unresolved ASAR rollback exists');
+    const verifyLive = () => {
+        if (verifiedNextSha256) {
+            if (hashFile(live) !== verifiedNextSha256) throw new Error('ASAR live post-rename hash mismatch');
+        } else {
+            inspectArchive(live);
+        }
+    };
     if (!fs.existsSync(live)) {
         if (keepRollback) throw new Error('Cannot commit ASAR/config pair without a live rollback source');
         fs.renameSync(next, live);
         syncDir(dir);
-        inspectArchive(live);
+        verifyLive();
         return;
     }
     fs.renameSync(live, rollback);
@@ -710,7 +716,7 @@ function replace(dir, next, keepRollback = false, { alreadyInspectedNext = false
         syncDir(dir);
         fs.renameSync(next, live);
         syncDir(dir);
-        inspectArchive(live);
+        verifyLive();
     } catch (error) {
         if (fs.existsSync(live)) fs.renameSync(live, `${next}.failed`);
         if (fs.existsSync(rollback)) fs.renameSync(rollback, live);
@@ -783,6 +789,7 @@ function commitStagedAsar(dir, next, config, original, inspectSidecar, txCtx) {
         }
         if (fs.existsSync(`${next}.unpacked`)) fs.rmSync(`${next}.unpacked`, { recursive: true });
         syncFile(next);
+        const nextSha256 = hashFile(next);
         let markerWritten = false;
         if (config) {
             if (fs.existsSync(configMarkerPath(dir))) throw new Error('Unresolved ASAR config transaction exists');
@@ -798,7 +805,7 @@ function commitStagedAsar(dir, next, config, original, inspectSidecar, txCtx) {
             markerWritten = true;
         }
         try {
-            replace(dir, next, !!config, { alreadyInspectedNext: true });
+            replace(dir, next, !!config, { alreadyInspectedNext: true, verifiedNextSha256: nextSha256 });
             if (config) {
                 fs.renameSync(configStage, configFile);
                 syncDir(path.dirname(configFile));

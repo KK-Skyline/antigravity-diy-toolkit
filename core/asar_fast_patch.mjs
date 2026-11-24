@@ -109,21 +109,25 @@ function encodeAsarHeader(headerObj) {
 }
 
 function writeBuffersAtomic(outputPath, buffers) {
+    const nonEmpty = buffers.filter(b => b.length > 0);
     const fd = fs.openSync(outputPath, 'wx');
     try {
         const BATCH = 512;
-        for (let i = 0; i < buffers.length; i += BATCH) {
-            const slice = buffers.slice(i, i + BATCH);
+        for (let i = 0; i < nonEmpty.length; i += BATCH) {
+            const slice = nonEmpty.slice(i, i + BATCH);
             let total = 0;
             for (const b of slice) total += b.length;
             let written = 0;
             let idx = 0;
             let off = 0;
             while (written < total) {
-                const iov = idx === 0 && off > 0
-                    ? [slice[0].subarray(off), ...slice.slice(1)]
+                const iov = off > 0
+                    ? [slice[idx].subarray(off), ...slice.slice(idx + 1)]
                     : slice.slice(idx);
                 const n = fs.writevSync(fd, iov);
+                if (n <= 0) {
+                    throw new Error(`Short write (0 bytes) while writing ${outputPath}`);
+                }
                 written += n;
                 let rem = n;
                 while (rem > 0 && idx < slice.length) {
