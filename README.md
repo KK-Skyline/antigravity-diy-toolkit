@@ -1,43 +1,29 @@
-# Antigravity 2.0 终极定制套件 (DIY Customization & Localization Toolkit)
+# Antigravity 汉化与换肤工具
 
 > 许可状态：上游代码及素材的再发布授权仍待核实；请勿仅凭仓库公开可见或历史 MIT 徽章推定可自由再分发。
 >
 > 使用边界：本工具会修改 Google Antigravity 的 `app.asar`。Google 通用条款禁止修改其软件；私有仓库不改变该条款。参见 [Google Antigravity 附加条款](https://antigravity.google/terms)及其引用的 [Google 通用条款](https://policies.google.com/terms)。
 
-👉 **[繁體中文版說明文件 (Traditional Chinese README)](README_TW.md)**
+[繁體中文版說明 (README_TW.md)](README_TW.md)
 
 ---
 
-## 🌟 核心特性概览 (Highlights)
+## 这是什么
 
-本项目不仅是 **Antigravity 2.0+（已适配至 2.34.0）** 的深度汉化包，也提供桌面定制功能。运行时不下载 ASAR 工具；首次使用需 Node.js >=22.12.0 并执行 `npm ci --omit=dev` 安装锁定依赖。
+给 **Google Antigravity 2.0+（当前已实测适配至 2.35.0）** 用的中文汉化与换肤工具。通过向 `app.asar` 注入脚本与样式，实现简繁汉化、主题换肤和 Wallpaper Engine 壁纸背景，支持只换肤不汉化。
 
-1. **🎨 Wallpaper Engine 创意工坊联动**
-   - 自动扫描本地 Steam 创意工坊已订阅壁纸库，无需手动找图；
-   - 可尝试从 `scene.pkg` 提取较高清素材；效果取决于壁纸资源；
-   - 支持 MP4/WebM 视频及场景动画，帧率和画质取决于素材与设备；
-   - 适配 2.34+ Shell/Sheet 布局与内置浏览器三层视图（`data-has-browser-hole`），通过 CSS 和页面注入呈现亚克力效果。
-2. **🌐 独立交互式控制中心：壁纸选择库 (Wallpaper Hub)**
-   - 运行于 `http://localhost:3210` 的独立 Web 控制台；
-   - 支持实时关键词搜索、类型过滤（视频壁纸 / 场景动画 / 网页交互 / 当前生效）；
-   - **现代丝滑调参抽屉**：配备 `setPointerCapture` 连续捕获引擎的流体滑块（透明度、毛玻璃模糊、对比度、亮度、饱和度、边缘暗化）；
-   - 应用换肤并重新启动客户端生效。
-3. **💎「失重亚克力」毛玻璃主题 (Weightless Acrylic Glass)**
-   - 智能色彩提取算法：动态捕捉当前壁纸主色系，计算悬浮岛磨砂玻璃色调；
-   - 穿透 2.34+ `body[data-agy-theme]` / `.agy-inset-shell` / `.surface-composer-card` 壳层，保持全透明标题栏、悬浮岛侧栏与清晰设置弹窗；
-   - 兼容 `BaseWindow` 与 `debugConsole.js`，支持原生 F12 / `Ctrl+Shift+I` 开发者调试控制台。
-4. **🖤 极简科技黑曜石蓝黑主题 (Obsidian Tech Blue)**
-   - 极客最爱的沉浸式低对比蓝黑质感（同步覆盖 2.34+ `--shell` / `--onyx-*` 令牌），长时间编码不疲劳。
-5. **🈳 深度中文汉化 (简繁双语)**
-   - 覆盖主界面（含 2.34+ 自动化、远程/WSL、内置浏览器、扩展包合集、钩子与底部终端）、系统菜单、右键托盘（含动态 WSL 项）、设置中心与更新弹窗（2.34+ 加载页已为纯图标，自动跳过文本替换）；
-   - 具备长句与短词匹配，并隔离代码块、编辑器、终端命令与内置浏览器地址栏。
-6. **🛡️ 备份与恢复**
-   - 不修改核心二进制执行文件，纯 JavaScript/CSS 动态注入；
-   - 安装前保留版本化、带 SHA-256 校验的基线备份；恢复前验证备份并保留原件。pointer 中的元数据摘要可发现元数据不一致，但不能证明官方签名，也不能抵抗可同时改写所有本地文件的攻击者或保证零风险。
+- **插件化结构**：汉化（`i18n-zh`）、DevTools（`devtools`）、蓝黑主题（`theme-obsidian-blue`）、Wallpaper Engine 壁纸（`wallpaper-engine`）、亚克力透明层（`theme-acrylic`）、雨滴画布（`fx-rain`）全部拆为 `plugins/*` 独立插件，可按需开关，也支持 `--only-skin` / `--no-i18n` 纯换肤模式。
+- **Wallpaper Engine 背景与本地选壁纸网页**：自动读取本地 Steam 创意工坊订阅的壁纸库（支持视频壁纸直放、场景壁纸提取高清图与雨滴粒子），配套本地网页（`http://localhost:3210`）浏览、搜索并调节透明度、模糊、亮度、对比度与饱和度。
+- **两套皮肤**：
+  - **亚克力透明主题**：从当前壁纸取主色，穿透 2.34+/2.35+ 的 Shell/Sheet 布局与内置浏览器视口（`data-has-browser-hole`），保留透明标题栏与侧栏层次；
+  - **蓝黑深色主题**：低对比度深蓝黑配色，可单独使用或与壁纸叠加。
+- **简繁中文汉化**：覆盖主界面、顶部菜单、系统托盘（含 WSL 项）、设置面板和更新弹窗；自动跳过代码块、编辑器、终端与内置浏览器区域。
+- **极速增量写入与基线备份**：内存增量改写 `app.asar`（只重打包 `dist/` 变更，单次写入约 2 秒），安装前保留带 SHA-256 校验的版本化基线备份，可随时恢复到已保存基线。
+  > 说明：基线 pointer 中的元数据摘要可用于发现文件不一致，但不能证明官方签名，也不能抵抗可同时改写本地文件的攻击者。
 
 ---
 
-## 📸 效果展示
+## 效果预览
 
 | 简体中文主界面 | 简体中文菜单 |
 | :---: | :---: |
@@ -45,114 +31,111 @@
 
 ---
 
-## 📂 开箱即用脚本清单
+## 快速开始
 
-| 脚本文件 | 功能说明 |
-| :--- | :--- |
-| **`双击打开-壁纸选择库.bat`** | **【推荐】** 启动 Wallpaper Hub（端口 3210）并在浏览器中打开控制中心 |
-| **`双击安装中文汉化.bat`** | 一键安装简体中文汉化语言包 |
-| **`双击安装繁体中文.bat`** | 一键安装繁体中文（台灣/香港習慣用語）语言包 |
-| **`双击换肤-联动壁纸引擎背景.bat`** | 快速注入当前 Wallpaper Engine 壁纸与失重亚克力背景 |
-| **`双击换肤-切换黑曜石质感蓝黑主题.bat`** | 切换至极客黑曜石科技蓝黑皮肤 |
-| **`双击换肤-壁纸引擎+黑曜石质感蓝.bat`** | 动态壁纸背景与黑曜石主题双重叠加 |
-| **`双击换肤-还原官方默认主题.bat`** | 清除壁纸与自定义主题，恢复默认黑色 |
-| **`双击卸载还原官方英文.bat`** | 从已保存基线恢复英文状态；基线来源需自行核对 |
-| **`一键彻底还原官方英文(保底防炸).bat`** | 调用统一的备份验证与恢复流程；默认要求先关闭客户端，文件名不代表已验证官方来源 |
+### 1. 环境准备
 
----
-
-## 🚀 极速使用指南
-
-### 1. 准备环境与下载
-- 安装 Node.js >=22.12.0；在项目目录执行 `npm ci --omit=dev`。壁纸素材处理的部分功能还需要 Python 和 Wallpaper Engine。
-- 直接 Clone 本仓库或下载 ZIP 包并解压至任意目录：
-  ```bash
+- 安装 **Node.js >= 22.12.0**（处理部分场景壁纸还需本机有 Python 和 Wallpaper Engine）。
+- 克隆仓库或下载 ZIP 解压后，在项目根目录安装依赖（运行时不会联网下载 ASAR 工具）：
+  ```powershell
   git clone https://github.com/KK-Skyline/antigravity-diy-toolkit.git
+  cd antigravity-diy-toolkit
+  npm ci --omit=dev
   ```
 
-### 2. 启动壁纸选择库网页 (Wallpaper Hub)
+### 2. 首次安装（建立当前版本基线）
 
-> **前置条件**：
-> 1. 已在项目根目录执行过一次 `npm ci --omit=dev`；
-> 2. **首次安装或 Antigravity 刚升级新版本后**，先退出 Antigravity 并在项目根目录执行一次带基线确认的命令行安装（Wallpaper Hub 不会自动建立新版本基线）：
->    ```powershell
->    node localization_engine.js --wallpaper --confirm-unverified-baseline
->    ```
->    （只要壁纸换肤、不要汉化可附加 `--only-skin`）。
+首次使用，或 Antigravity 刚更新新版本后，先退出 Antigravity，核对本机 `app.asar` 来源无误后，在项目根目录执行一次带 `--confirm-unverified-baseline` 的安装命令：
 
-**启动网页（两种方式任选其一）**：
-- **方式 A：Windows 双击启动（推荐）**
-  - 在仓库目录直接双击 **`双击打开-壁纸选择库.bat`**，脚本会自动启动本地服务并在默认浏览器打开 `http://localhost:3210`。
-- **方式 B：命令行启动（Windows / 通用）**
-  - 在仓库根目录打开终端执行：
-    ```powershell
-    node wallpaper_hub_server.js
-    ```
-  - 看到服务监听 `3210` 端口后，手动在浏览器打开 **`http://localhost:3210`**（或 `http://127.0.0.1:3210`）。
+```powershell
+# 汉化 + 壁纸换肤
+node localization_engine.js --wallpaper --confirm-unverified-baseline
 
-**选壁纸与应用步骤**：
-1. 在网页中浏览/搜索你本地 Steam 订阅的所有 Wallpaper Engine 壁纸，点击任意卡片展开右侧调参抽屉；
-2. 调节透明度、毛玻璃模糊、亮度、对比度、饱和度等参数，点击 **「应用」**（勾选自动重启可一键重启客户端生效，极速 ASAR 引擎约 2 秒完成写入）；
-3. **常见排查**：
-   - **刚点开浏览器提示无法连接**：`.bat` 拉起浏览器早于 Node 启动约半秒，等待 1 秒按 **F5** 刷新即可；
-   - **提示端口 `3210` 已被占用**：说明之前已经开过一个 Wallpaper Hub 窗口，直接访问 `http://localhost:3210` 或先关闭旧的黑色终端窗口；
-   - **使用完毕**：直接关闭黑色终端窗口（或在终端按 `Ctrl+C`）即可退出本地服务；首次使用前默认配置为禁用状态，不预选其他用户的创意工坊作品。
+# 只要壁纸换肤，不装汉化
+node localization_engine.js --wallpaper --only-skin --confirm-unverified-baseline
 
-### 3. 一键安装中文汉化
-1. 退出 Antigravity 客户端；
-2. 首次安装或客户端升级后，先自行核对当前 `app.asar` 的来源与哈希；确认接受其来源后，运行 `node localization_engine.js --confirm-unverified-baseline`。该命令会建立版本化基线并**同时完成本次简体安装**，不是仅备份；此确认不等于工具已验证官方签名。未经确认时安装会停止，Wallpaper Hub 也不会自动建立基线；
-3. 后续可双击运行 **`双击安装中文汉化.bat`**（macOS 运行 `.command`）；
-4. 按照提示选择品牌显示偏好；
-5. 重新打开 Antigravity。
+# 只要简体中文汉化
+node localization_engine.js --confirm-unverified-baseline
+```
 
-运维边界：锁文件仅凭 PID 判断存活，PID 被复用时可能保守地拒绝安装；先确认没有安装器进程，再核对锁、待恢复标记和基线备份，不要盲删。最终进程检查与写入之间仍有竞态。macOS 的实际权限、签名及文件系统断电恢复，Windows 的文件锁与磁盘故障，均需在目标机器上验证；合成回归不替代实机演练。
+> 该命令会建立当前版本的基线备份并同时完成本次注入（不是仅备份）；确认标志不代表工具验证了官方签名。未建立基线前，直接运行脚本或网页应用都会停止。
+
+### 3. 打开网页选壁纸（Wallpaper Hub）
+
+建好基线后，随时可以通过本地网页挑选和微调 Wallpaper Engine 壁纸，两种启动方式任选其一：
+
+- **Windows 双击**：在仓库目录直接双击 **`双击打开-壁纸选择库.bat`**，会自动拉起本地服务并打开浏览器 `http://localhost:3210`。
+- **命令行启动**：在仓库根目录运行：
+  ```powershell
+  node wallpaper_hub_server.js
+  ```
+  终端就绪后，浏览器手动打开 **`http://localhost:3210`**（或 `http://127.0.0.1:3210`）。
+
+**使用与排查**：
+- 点任意壁纸卡片展开右侧面板，调好参数点 **「应用」**（勾选自动重启可一键重启客户端生效）；
+- 刚双击 `.bat` 时浏览器可能比 Node 早开半秒导致提示无法连接，等 1 秒按 **F5** 刷新即可；
+- 若提示 `3210` 端口被占用，说明已有一个 Wallpaper Hub 窗口在运行，直接访问 `http://localhost:3210` 或关掉旧窗口即可；
+- 选完壁纸后，直接关闭黑色终端窗口（或在终端按 `Ctrl+C`）即可退出服务。
 
 ---
 
-## 🛠️ 高级参数说明 (CLI)
+## 常用脚本（Windows）
 
-核心引擎 `localization_engine.js` 支持直接通过 Node.js 命令行调用：
+| 脚本文件 | 说明 |
+| :--- | :--- |
+| `双击打开-壁纸选择库.bat` | 启动本地壁纸选择网页（`http://localhost:3210`） |
+| `双击安装中文汉化.bat` | 安装简体中文汉化 |
+| `双击安装繁体中文.bat` | 安装繁体中文汉化 |
+| `双击换肤-联动壁纸引擎背景.bat` | 注入当前配置的 Wallpaper Engine 壁纸与亚克力主题 |
+| `双击换肤-切换黑曜石质感蓝黑主题.bat` | 切换到深蓝黑主题 |
+| `双击换肤-壁纸引擎+黑曜石质感蓝.bat` | 壁纸背景 + 深蓝黑主题叠加 |
+| `双击换肤-还原官方默认主题.bat` | 清除壁纸和皮肤，保留汉化 |
+| `双击卸载还原官方英文.bat` | 从已保存基线恢复未注入状态 |
+| `一键彻底还原官方英文(保底防炸).bat` | 同上，默认要求先关闭客户端；文件名不代表已验证官方来源 |
+
+---
+
+## 命令行参数与插件配置
 
 ```bash
-# 安装简体中文 + 联动当前壁纸
+# 简体中文 + 壁纸换肤
 node localization_engine.js --wallpaper
 
-# 安装繁体中文
+# 纯换肤，不装汉化（--only-skin 与 --no-i18n 等价）
+node localization_engine.js --wallpaper --only-skin
+
+# 繁体中文
 node localization_engine.js --tw
 
-# 安装黑曜石科技蓝黑主题
+# 蓝黑主题
 node localization_engine.js --dark-blue
 
-# 自定义左上角品牌名展示 (english / hidden / translated)
+# 左上角品牌名样式：english / hidden / translated
 node localization_engine.js --brand-title english
 
-# 从已保存基线恢复英文状态
-node localization_engine.js --huifu
+# 按插件 ID 精确开关（可用：i18n-zh, devtools, theme-obsidian-blue, wallpaper-engine, theme-acrylic, fx-rain）
+node localization_engine.js --enable wallpaper-engine,theme-acrylic --disable fx-rain
 
-# 仅在旧版基线 pointer 缺少确认标志或元数据摘要、且已自行核对来源时，显式确认后恢复
+# 恢复到已保存基线
+node localization_engine.js --huifu
 node localization_engine.js --huifu --confirm-unverified-baseline
 ```
 
----
-
-## 🔒 隐私与安全声明
-
-- Wallpaper Hub 仅监听本机回环地址；使用前仍应自行审查脚本及依赖。
-- `wallpaper_config.json` 会保存视觉参数、创意工坊 ID 和壁纸描述；该文件当前由 Git 跟踪，分享修改后的仓库或补丁前请检查其中内容。
+- **持久化插件配置**：复制 `plugins.config.example.json` 为 `plugins.config.json`（已被 `.gitignore` 忽略），按需修改各插件开关和参数后，直接运行 `node localization_engine.js` 即可生效。
+- **排障回退**：如遇异常可设置环境变量 `AG_DISABLE_FAST_ASAR=1` 回退至全量解包打包模式。
 
 ---
 
-## 🤝 致谢与协议
+## 隐私、安全与运维边界
 
-- 本项目衍生自 [qqxpee/antigravity2-cn](https://github.com/qqxpee/antigravity2-cn)，保留原项目及贡献者的归属。上游目前未提供许可证文件，再发布及本仓库整体授权范围待确认。
-- 此仓库未包含 Google Antigravity 或 Wallpaper Engine 的安装文件，相关商标归各自权利人所有。
-- 问题反馈请使用本仓库的 [Issues](https://github.com/KK-Skyline/antigravity-diy-toolkit/issues)。
+- Wallpaper Hub 仅监听 `127.0.0.1:3210` 本地回环地址；使用前请自行核对脚本与依赖。
+- `wallpaper_config.json` 记录了壁纸 ID 与视觉参数，对外分享仓库或提交前注意不要带上个人配置。
+- 安装锁仅凭 PID 判断进程存活，极端情况下（PID 复用）可能保守拒绝写入；请确认无安装器运行并核对锁、待恢复标记与基线备份后再处理，不要盲删。最终进程检查与文件替换之间仍存在竞态窗口，macOS 签名权限及 Windows 文件锁行为均以目标机实测为准。
 
 ---
 
-## 🧩 插件化架构与纯换肤模式
+## 致谢与反馈
 
-本项目已将汉化、DevTools、黑曜石蓝、Wallpaper Engine、失重亚克力主题及雨滴特效拆分为 `plugins/*` 下的独立插件，由 `core/plugin_loader.js` 与 `core/injector.js` 统一编排：
-- **纯换肤（不装汉化）**：`node localization_engine.js --wallpaper --no-i18n`（或 `--only-skin`），仅注入壁纸与主题，不注入中文翻译；
-- **按插件开关**：支持 `--enable <id,...>` / `--disable <id,...>`（可用插件：`i18n-zh`、`devtools`、`theme-obsidian-blue`、`wallpaper-engine`、`theme-acrylic`、`fx-rain`）；
-- **自定义配置**：可复制 `plugins.config.example.json` 为 `plugins.config.json`（已被 `.gitignore` 忽略）。
+- 衍生自 [qqxpee/antigravity2-cn](https://github.com/qqxpee/antigravity2-cn)，保留原项目与贡献者归属。上游未提供许可证文件，再发布授权范围待确认。
+- 本仓库不包含 Google Antigravity 或 Wallpaper Engine 的任何安装文件，相关商标归各自权利人所有。
+- Bug 或建议请在 [Issues](https://github.com/KK-Skyline/antigravity-diy-toolkit/issues) 反馈。
