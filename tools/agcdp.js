@@ -14,14 +14,29 @@ const fs = require('fs');
 const path = require('path');
 
 async function findEndpoint() {
-  try {
-    const list = await (await fetch('http://127.0.0.1:9222/json/list')).json();
-    return { base: 'http://127.0.0.1:9222', list };
-  } catch (e) {}
+  const candidates = [];
+  const activePortFile = path.join(process.env.APPDATA || '', 'Antigravity', 'DevToolsActivePort');
+  if (fs.existsSync(activePortFile)) {
+    const lines = fs.readFileSync(activePortFile, 'utf8').trim().split(/\r?\n/);
+    if (lines[0] && /^\d+$/.test(lines[0].trim())) {
+      candidates.push({ port: lines[0].trim(), wsPath: lines[1] ? lines[1].trim() : '' });
+    }
+  }
+  candidates.push({ port: '9222', wsPath: '' });
+  for (const c of candidates) {
+    try {
+      const base = 'http://127.0.0.1:' + c.port;
+      const list = await (await fetch(base + '/json/list')).json();
+      const browserWs = c.wsPath ? `ws://127.0.0.1:${c.port}${c.wsPath}` : '';
+      return { base, list, browserWs };
+    } catch (e) {}
+  }
   const log = path.join(process.env.APPDATA || '', 'Antigravity', 'logs', 'language_server.log');
   const txt = fs.existsSync(log) ? fs.readFileSync(log, 'latin1') : '';
   const all = [...txt.matchAll(/ws:\/\/127\.0\.0\.1:(\d+)\/devtools\/browser\/[a-f0-9-]+/g)];
-  if (!all.length) throw new Error('找不到调试端口：Antigravity 没在运行？');
+  if (!all.length) {
+    throw new Error('找不到调试端口：Antigravity 未运行，或 2.34+ 未带 --remote-debugging-port=9222 启动。');
+  }
   const port = all[all.length - 1][1];
   const base = 'http://127.0.0.1:' + port;
   const list = await (await fetch(base + '/json/list')).json();

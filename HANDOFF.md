@@ -1,8 +1,17 @@
 # 交接包：Antigravity「失重亚克力」主题 + 壁纸引擎
 
-> 最后更新：2026-10-05（Antigravity 2.19.1；已合并安全加固 PR #1 并推送 `main` = `e578ba1`）
+> 最后更新：2026-11-24（适配 **Antigravity 2.34.0**，分支 `fix/adapt-antigravity-2.34`；当前安装与恢复流程见 [README.md](README.md)，执行前重新核对客户端、Hub、基线与用户授权）
 > 目的：让下一个会话（或下一个 AI / 你自己）不用翻旧对话，就能接着干。
 > 只写**最终确认正确**的结论；调试过程中被推翻的判断一律不写。
+
+### 🆕 2026-11-24 Antigravity 2.34.0 适配要点（`fix/adapt-antigravity-2.34`）
+- **Shell / Sheet 透明穿透**：2.34.0 引入 `body[data-agy-theme]`、`.agy-shell`、`.agy-inset-shell`（`--shell-canvas: var(--shell)`）、`.agy-sheet[data-sheet-inset]`（`[data-main-content-body]` / `[data-side-panel-body]`）与 `.surface-composer > .surface-composer-card`（显式关闭 `backdrop-filter`）。已在 [`theme-acrylic.css`](theme-acrylic.css) 与 `--dark-blue` 中完整覆写，并在内置浏览器挖洞（`body[data-has-browser-hole="true"]`）激活时自动淡出底层壁纸，避免遮挡三层 WCV 浏览器画面。
+- **主进程注入修复**：
+  - `dist/debugConsole.js`：`isDebugConsoleEnabled()` 统一放开 DevTools；`dist/keybindings.js` 改用 `getHubWebContents(win) ?? win.webContents` 兼容 `BaseWindow`；
+  - `dist/tray.js`：正则适配 `createTray(actions, onClick)`，新增 `insertTrayMenuItem` 动态 WSL 项翻译，双击唤起兼容 `BaseWindow`；
+  - `dist/menu.js`：新增 WSL 菜单译文，并修复 `addItemToSubmenu(menu, 'File', ...)` 在菜单汉化后找不到“文件”菜单的问题；
+  - `dist/loadingOverlay.js`：2.34.0 为纯 SVG 图标加载页，无文本节点时自动跳过。
+- **词典与调试工具**：简繁双语增补 114 条 2.34.0 新增高频界面词条（自动化、WSL/远程、扩展包、钩子、底部终端、内置浏览器等）并通过 `tools/compare_dicts.js` 校验；`tools/agcdp.js` 兼容 `DevToolsActivePort` 及 2.34+ `--remote-debugging-port=9222` 提示；`tools/check-wallpaper.js` 增加 `.agy-shell` / `.agy-inset-shell` / `.surface-composer-card` 透明诊断。
 
 ---
 
@@ -50,7 +59,7 @@
 | `design/acrylic_preview.html` | 设计预览稿（可调参数），用 `python -m http.server` 打开才能取色 |
 | `tools/agcdp.js` | 调试工具：读 DOM、截图、看日志、正常关闭 Antigravity |
 | `tools/check-wallpaper.js` | 一键查看当前壁纸 / 视频 / 雨 / 自适应变量的状态 |
-| `localization_engine.before-acrylic.js` | 改造前的安装器备份（想彻底回退旧主题时用） |
+| 历史安装器副本 | 原文提及的 before-acrylic 文件已不在当前工作树。恢复前核对实际基线和版本。 |
 
 ### 安装后，Antigravity 里被改动的地方（`app.asar` 内）
 - `dist/preload.js` 末尾：汉化 + 主题 + 壁纸运行时代码
