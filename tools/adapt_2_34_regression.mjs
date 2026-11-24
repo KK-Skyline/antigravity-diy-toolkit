@@ -206,8 +206,10 @@ try {
         const preload1 = fs.readFileSync(path.join(inspect1, 'dist/preload.js'), 'utf8');
         assert.ok(preload1.includes('ANTIGRAVITY CHINESE LOCALIZATION START'));
         assert.ok(preload1.includes('--shell-canvas: #090d13 !important'));
-        assert.ok(preload1.includes('[data-testid="builtin-browser-pane"]'));
+        assert.ok(preload1.includes('[data-browser-hole], webview'));
+        assert.ok(!preload1.includes('[data-testid="builtin-browser-pane"]'), 'builtin-browser-pane must not be isolated');
         assert.ok(preload1.includes('Automations'));
+        assert.ok(preload1.includes("valNorm.endsWith('...')"), 'prefix fallback must require ellipsis truncation');
 
         const dc1 = fs.readFileSync(path.join(inspect1, 'dist/debugConsole.js'), 'utf8');
         assert.match(dc1, /function isDebugConsoleEnabled\(\)\s*\{\s*return true;\s*\}/);
@@ -223,7 +225,7 @@ try {
         assert.ok(tray1.includes('TRAY TRANSLATION START'));
         assert.ok(tray1.includes('TRAY INSERT TRANSLATION START'));
         assert.ok(tray1.includes('TRAY DOUBLE CLICK START'));
-        assert.ok(tray1.includes('BaseWindow'));
+        assert.ok(tray1.includes('getLocalHubWindows') && tray1.includes('BaseWindow'));
         assert.ok(tray1.includes('个智能体运行中'));
 
         const updater1 = fs.readFileSync(path.join(inspect1, 'dist/updater.js'), 'utf8');
@@ -240,13 +242,43 @@ try {
         const tray2 = fs.readFileSync(path.join(inspect2, 'dist/tray.js'), 'utf8');
         assert.equal((tray2.match(/TRAY TRANSLATION START/g) || []).length, 1, 'tray translation block duplicated');
         assert.ok(tray2.includes('連線到 WSL'));
+        assert.ok(tray2.includes('個代理執行中'));
         const menu2 = fs.readFileSync(path.join(inspect2, 'dist/menu.js'), 'utf8');
         assert.ok(menu2.includes('連線到 WSL'));
+
+        // Direct CN -> TW re-patch idempotency on an already-CN-patched menu.js & tray.js
+        const cnRepatchSrc = path.join(tmpBase, 'cn-repatch-src');
+        fs.cpSync(inspect1, cnRepatchSrc, { recursive: true });
+        // Keep preload.js clean so asar_transaction accepts the archive as a baseline while menu.js & tray.js remain CN-patched
+        fs.copyFileSync(path.join(srcDir, 'dist', 'preload.js'), path.join(cnRepatchSrc, 'dist', 'preload.js'));
+        const cnRepatchDir = path.join(tmpBase, 'cn-repatch');
+        const cnRepatchRes = path.join(cnRepatchDir, 'resources');
+        const cnRepatchStore = path.join(tmpBase, 'cn-repatch-store');
+        fs.mkdirSync(cnRepatchRes, { recursive: true });
+        fs.mkdirSync(cnRepatchStore, { recursive: true });
+        const cnRepatchAsar = path.join(cnRepatchRes, 'app.asar');
+        await asar.createPackage(cnRepatchSrc, cnRepatchAsar);
+        const repatchOut = spawnSync(process.execPath, [ENGINE, '--install-dir', cnRepatchDir, '--tw', '--confirm-unverified-baseline'], {
+            cwd: ROOT,
+            env: { ...process.env, AG_BASELINE_STORE: cnRepatchStore },
+            encoding: 'utf8',
+        });
+        assert.equal(repatchOut.status, 0, repatchOut.stderr);
+        const inspect3 = path.join(tmpBase, 'inspect3');
+        asar.uncache(cnRepatchAsar);
+        asar.extractAll(cnRepatchAsar, inspect3);
+        const menu3 = fs.readFileSync(path.join(inspect3, 'dist/menu.js'), 'utf8');
+        const tray3 = fs.readFileSync(path.join(inspect3, 'dist/tray.js'), 'utf8');
+        checkSyntax(path.join(inspect3, 'dist/menu.js'));
+        checkSyntax(path.join(inspect3, 'dist/tray.js'));
+        assert.ok(menu3.includes('連線到 WSL') && !menu3.includes("'连接到 WSL'"), 'menu.js CN->TW re-patch failed');
+        assert.ok(tray3.includes('個代理執行中') && !tray3.includes('个智能体运行中'), 'tray.js CN->TW re-patch failed');
+        assert.equal((tray3.match(/TRAY TRANSLATION START/g) || []).length, 1, 'tray.js re-patch duplicated marker');
 
         // Restore must match original SHA-256 bit-for-bit
         runEngine(['--huifu']);
         assert.equal(hash(liveAsar), originalSha, 'Restored ASAR SHA-256 mismatch');
-        console.log('adapt 2.34.0 synthetic ASAR install + zh-TW + idempotency + restore: PASS');
+        console.log('adapt 2.34.0 synthetic ASAR install + zh-TW + CN->TW re-patch + restore: PASS');
     }
 
     console.log('adapt 2.34.0 regression: PASS');

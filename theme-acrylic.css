@@ -131,11 +131,17 @@ body[data-has-browser-hole="true"] > #ag-rain-canvas {
   opacity: 0 !important;
   transition: opacity .2s ease !important;
 }
-body[data-has-browser-hole="true"] .agy-inset-shell {
+body[data-has-browser-hole="true"] .agy-inset-shell,
+body[data-has-browser-hole="true"] .bg-\[var\(--shell-canvas\)\] {
   --shell-canvas: #0b0f12 !important;
+  background-color: #0b0f12 !important;
 }
-body[data-has-browser-hole="true"] .agy-sheet[data-sheet-inset] :is([data-main-content-body], [data-side-panel-body]):not([data-has-browser-hole="true"]) {
+body[data-has-browser-hole="true"] :is(.agy-sheet[data-sheet-inset] [data-main-content-body], .agy-inset-shell [data-side-panel-body]):not([data-browser-hole]):not(:has([data-browser-hole]:not([data-browser-hole="false"]))) {
   background-color: #0e1316 !important;
+}
+body[data-has-browser-hole="true"] [data-browser-hole]:not([data-browser-hole="false"]) {
+  background: transparent !important;
+  background-color: transparent !important;
 }
 
 /* ---------- 细滚动条：平时隐形，悬停出现 ---------- */
@@ -171,8 +177,11 @@ body[data-agy-theme] .agy-sheet .agy-titlebar.bg-sidebar {
   box-shadow: var(--ag-shadow) !important;
   overflow: hidden !important;
 }
-/* 2.34+ 侧栏收起后悬停呼出（Peek 模式）需要更深的磨砂以防文字透底 */
-[data-peek-surface="open"] .bg-sidebar:has([data-testid="sidebar-navigation-items"]) {
+/* 2.34+ 侧栏收起后悬停呼出（Peek 模式）需要更深的磨砂以防文字透底，并贴齐左缘防悬停断触 */
+[data-peek-surface="open"] .bg-sidebar:has([data-testid="sidebar-navigation-items"]),
+[data-peek-surface="open"].bg-sidebar:has([data-testid="sidebar-navigation-items"]) {
+  margin-left: 0 !important;
+  width: 100% !important;
   background: var(--ag-popover) !important;
   -webkit-backdrop-filter: blur(24px) saturate(160%) !important;
   backdrop-filter: blur(24px) saturate(160%) !important;
@@ -201,6 +210,7 @@ body[data-agy-theme] .agy-sheet .agy-titlebar.bg-sidebar {
 /* 选中对话：白色叠加 + 左侧强调色竖条 */
 [data-testid="conversation-row-sidebar"][data-selected="true"],
 .agy-sidebar-row[data-selected="true"] {
+  position: relative !important;
   background: var(--ag-state-selected) !important;
 }
 [data-testid="conversation-row-sidebar"][data-selected="true"] .text-secondary-foreground,
@@ -257,7 +267,7 @@ body[data-agy-theme] .agy-sheet .agy-titlebar.bg-sidebar {
   box-shadow: 0 8px 28px rgb(0 0 0 / .3) !important;
 }
 .md-sticky-message-bleed [data-testid="lifted-context-menu-trigger"] > .bg-card { background: transparent !important; }
-[data-testid="conversation-view"] .sticky.top-0.bg-background {
+[data-testid="conversation-view"] .sticky.top-0.bg-background:not(:has(.md-sticky-message-bleed)) {
   background: var(--ag-glass-tint) !important;
   -webkit-backdrop-filter: blur(var(--ag-blur-sticky)) saturate(var(--ag-sat)) !important;
   backdrop-filter: blur(var(--ag-blur-sticky)) saturate(var(--ag-sat)) !important;
@@ -352,13 +362,16 @@ body[data-agy-theme] .quick-input-widget.surface-glass {
   --muted: #1d2427 !important;       --color-muted: #1d2427 !important;
   --secondary: #1a2124 !important;   --color-secondary: #1a2124 !important;
   background-color: #0c1113 !important;
+}
+.settings-modal-container, [class*="settings-modal-container"],
+.agy-dialog, [role="dialog"], [data-radix-dialog-content] {
   border: 1px solid rgb(255 255 255 / .12) !important;
   border-radius: var(--ag-r-lg) !important;
   box-shadow: 0 25px 60px rgb(0 0 0 / .8) !important;
 }
-[role="dialog"] .bg-background, .settings-modal-container .bg-background, .agy-dialog .bg-background { background-color: #0c1113 !important; }
-[role="dialog"] .bg-sidebar, .settings-modal-container .bg-sidebar, .agy-dialog .bg-sidebar { background-color: #090d0f !important; }
-[role="dialog"] .bg-card, .settings-modal-container .bg-card, .agy-dialog .bg-card { background-color: #141a1d !important; }
+:is([role="dialog"], .settings-modal-container, .agy-dialog, [data-radix-dialog-content], .surface-opaque) .bg-background { background-color: #0c1113 !important; }
+:is([role="dialog"], .settings-modal-container, .agy-dialog, [data-radix-dialog-content], .surface-opaque) .bg-sidebar { background-color: #090d0f !important; }
+:is([role="dialog"], .settings-modal-container, .agy-dialog, [data-radix-dialog-content], .surface-opaque) .bg-card { background-color: #141a1d !important; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; }

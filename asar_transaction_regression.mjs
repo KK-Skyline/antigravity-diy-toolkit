@@ -349,6 +349,16 @@ cp.execFileSync = (command, args, options) => {
     if (command === 'taskkill') { require('node:fs').writeFileSync(${JSON.stringify(taskkillMarker)}, 'called'); throw Error('unexpected taskkill'); }
     return real(command, args, options);
 };`);
+    if (process.platform !== 'win32') {
+        // runningShim spoofs process.platform='win32', which lowercases the baseline store key;
+        // mirror the already-created baseline dir under the win32-cased key so preflight finds it.
+        const realStore = tx.baselineStoreDir(integrationResources);
+        const winKey = crypto.createHash('sha256').update(fs.realpathSync.native(integrationResources).toLowerCase()).digest('hex').slice(0, 16);
+        const winStore = path.join(path.dirname(realStore), winKey);
+        if (winStore !== realStore && fs.existsSync(realStore) && !fs.existsSync(winStore)) {
+            fs.cpSync(realStore, winStore, { recursive: true });
+        }
+    }
     const beforeRunningReject = snapshot(integrationResources);
     const configBeforeRunningReject = fs.existsSync(engineConfig) ? fs.readFileSync(engineConfig) : null;
     for (const operation of [[], ['--huifu']]) {

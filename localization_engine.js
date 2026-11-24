@@ -95,7 +95,9 @@ if (USE_TW) {
         "[启动] 检测到安装前反重力客户端处于开启状态，正在重新启动客户端...": "[啟動] 偵測到安裝前反重力用戶端處於開啟狀態，正在重新啟動用戶端...",
         "[启动] 客户端启动成功！": "[啟動] 用戶端啟動成功！",
         "[警告] 未找到客户端主程序: ": "[警告] 未找到用戶端主程式: ",
-        "[警告] 客户端启动失败: ": "[警告] 用戶端啟動失敗: "
+        "[警告] 客户端启动失败: ": "[警告] 用戶端啟動失敗: ",
+        "[修改] 已通过 debugConsole.js 开启开发者工具权限。": "[修改] 已透過 debugConsole.js 開啟開發人員工具權限。",
+        "[跳过] 当前版本的 loadingOverlay.js 为纯图标加载页，无需文本汉化。": "[跳過] 目前版本的 loadingOverlay.js 為純圖示載入頁，無需文字漢化。"
     };
     const translateMsg = (args) => {
         return args.map(arg => {
@@ -370,8 +372,8 @@ function generateJs(configOverride = null) {
     // 轻量级安全隔离：跳过脚本、样式、代码块(pre/code)、编辑器区域以及终端容器
     const SKIP_TAGS = ['SCRIPT', 'STYLE', 'PRE', 'CODE'];
 
-    // 代码及编辑器隔离选择器：排除代码块、编辑器、文件预览器、代码差异区、终端、内置浏览器及语法高亮 Token
-    const CODE_ISOLATION_SELECTOR = 'pre, code, .monaco-editor, .cm-editor, .cm-line, [contenteditable="true"], .terminal, .xterm, .code-line, .code-block, .line-content, [aria-label="File Viewer"], [data-file-uri], [class*="diffEditor"], .token, .hljs, [class*="mtk"], [data-testid="background-task-command"], [data-testid="browser-url-display"], [data-testid="builtin-browser-pane"]';
+    // 代码及编辑器隔离选择器：排除代码块、编辑器、文件预览器、代码差异区、终端、浏览器地址栏与嵌入视口及语法高亮 Token
+    const CODE_ISOLATION_SELECTOR = 'pre, code, .monaco-editor, .cm-editor, .cm-line, [contenteditable="true"], .terminal, .xterm, .code-line, .code-block, .line-content, [aria-label="File Viewer"], [data-file-uri], [class*="diffEditor"], .token, .hljs, [class*="mtk"], [data-testid="background-task-command"], [data-testid="browser-url-display"], [data-browser-hole], webview';
 
     function isCodeOrEditor(node) {
         try {
@@ -645,12 +647,13 @@ function generateJs(configOverride = null) {
                         return USE_TW ? "以此身分傳送意見回饋：" : "以如下身份发送反馈：";
                     });
                 } else {
-                    // 2. 长句子串滑动替换与前缀截断智能匹配 (缩短至前 18 字符即可高精度命中)
+                    // 2. 长句子串滑动替换与省略号截断智能匹配（仅对真实以 "..." 截断的文本启用前缀匹配，避免劫持同前缀报错信息）
+                    const truncatedPrefix = valNorm.endsWith('...') && valLower.length >= 27 ? valLower.slice(0, -3) : '';
                     for (const [key, translated] of longEntries) {
                         if (key.length > 15 && valNorm.includes(key)) {
                             newVal = newVal.split(key).join(translated);
                             break;
-                        } else if (key.length >= 18 && valNorm.length >= 18 && valLower.slice(0, 18) === key.slice(0, 18).toLowerCase()) {
+                        } else if (truncatedPrefix && key.length >= 32 && key.toLowerCase().startsWith(truncatedPrefix)) {
                             newVal = translated;
                             break;
                         }
@@ -1601,12 +1604,12 @@ async function install20(resourcesDir, transaction, confirmUnverified, configPla
         const idx = menuCleaned.indexOf(targetStr);
         if (idx !== -1) {
             let patchedMenuContent = menuCleaned.substring(0, idx) + menuTranslationJs + "\n    " + menuCleaned.substring(idx);
-            // 2.34+ 异步挂载 WSL 菜单时通过 addItemToSubmenu(menu, 'File', ...) 查找英文菜单名，需兼容已汉化的菜单名并翻译新项
+            // 2.34+ 异步挂载 WSL 菜单时通过 addItemToSubmenu(menu, 'File', ...) 查找英文菜单名，需兼容已汉化的菜单名并支持 CN/TW 幂等切换
             const wslLabelConnect = USE_TW ? '連線到 WSL' : '连接到 WSL';
             const wslLabelLocal = USE_TW ? '在本機重新開啟' : '在本地重新打开';
             patchedMenuContent = patchedMenuContent
-                .replace("return { label: 'Connect to WSL', submenu };", `return { label: '${wslLabelConnect}', submenu };`)
-                .replace("return { label: 'Reopen Locally', click: () => relaunchWithWslDistro('') };", `return { label: '${wslLabelLocal}', click: () => relaunchWithWslDistro('') };`)
+                .replace(/return \{ label: '(?:Connect to WSL|连接到 WSL|連線到 WSL)', submenu \};/, `return { label: '${wslLabelConnect}', submenu };`)
+                .replace(/return \{ label: '(?:Reopen Locally|在本地重新打开|在本機重新開啟)', click: \(\) => relaunchWithWslDistro\(''\) \};/, `return { label: '${wslLabelLocal}', click: () => relaunchWithWslDistro('') };`)
                 .replace(
                     "const submenuItem = appMenu.items.find((item) => item.label === submenuLabel);",
                     `const submenuAliases = submenuLabel === 'File' ? ['File', '文件', '檔案', '文件(&F)', '檔案(&F)'] : [submenuLabel];\n    const submenuItem = appMenu.items.find((item) => submenuAliases.includes(item.label) || (submenuLabel === 'File' && /^(文件|檔案)/.test(item.label || '')));`
@@ -1668,14 +1671,16 @@ async function install20(resourcesDir, transaction, confirmUnverified, configPla
     /* --- TRAY INSERT TRANSLATION END --- */`;
         trayPatched = trayPatched.replace(insertTrayRegex, (m, params) => `function insertTrayMenuItem(${params}) {\n    ${trayInsertBlock}`);
 
-        // 2. 注入系统托盘图标双击弹出/聚焦 Antigravity 界面事件（兼容 BaseWindow 与 BrowserWindow）
+        // 2. 注入系统托盘图标双击弹出/聚焦 Antigravity 界面事件（优先使用 2.34+ getLocalHubWindows，兼容 BaseWindow 与 BrowserWindow）
         const dblClickTarget = /tray\.setContextMenu\(contextMenu\);/;
         const dblClickReplacement = `tray.setContextMenu(contextMenu);
     /* --- TRAY DOUBLE CLICK START --- */
     const openAction = actions.find(item => item && typeof item.click === 'function' && !['Quit', '退出', '結束'].includes(item.label));
     if (openAction) {
         tray.on('double-click', () => {
-            const wins = (electron_1.BaseWindow && typeof electron_1.BaseWindow.getAllWindows === 'function' ? electron_1.BaseWindow.getAllWindows() : null) || electron_1.BrowserWindow.getAllWindows();
+            const wins = (typeof utils_1 !== 'undefined' && typeof utils_1.getLocalHubWindows === 'function' ? (0, utils_1.getLocalHubWindows)() : null)
+                || (electron_1.BaseWindow && typeof electron_1.BaseWindow.getAllWindows === 'function' ? electron_1.BaseWindow.getAllWindows() : null)
+                || electron_1.BrowserWindow.getAllWindows();
             if (wins.length > 0 && wins[0].isMinimized && wins[0].isMinimized()) {
                 wins[0].restore();
             }
@@ -1685,8 +1690,8 @@ async function install20(resourcesDir, transaction, confirmUnverified, configPla
     /* --- TRAY DOUBLE CLICK END --- */`;
         trayPatched = trayPatched.replace(dblClickTarget, dblClickReplacement);
 
-        // 3. 使用正则替换 updateTrayAgentCount 里的动态显示文本
-        const countRegex = /countItem\.label\s*=\s*\([\s\S]*?' running';/g;
+        // 3. 使用正则替换 updateTrayAgentCount 里的动态显示文本（兼容 EN / CN / TW 幂等重注入）
+        const countRegex = /countItem\.label\s*=\s*(?:\([\s\S]*?' running'|count > 0 \? `\$\{count\} (?:个智能体运行中|個代理執行中)` : '(?:无运行中的智能体|無執行中的代理)');/g;
         const replacementCount = USE_TW 
             ? "countItem.label = count > 0 ? `${count} 個代理執行中` : '無執行中的代理';"
             : "countItem.label = count > 0 ? `${count} 个智能体运行中` : '无运行中的智能体';";

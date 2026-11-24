@@ -94,7 +94,7 @@ cd D:\antigravity2-cn
 node tools/agcdp.js close
 node localization_engine.js --wallpaper
 
-# 查看当前状态（Antigravity 正常运行时即可用，不需要调试参数）
+# 查看当前状态（Antigravity 2.34+ 需带 --remote-debugging-port=9222 启动以开启 CDP）
 node tools/agcdp.js eval tools/check-wallpaper.js
 node tools/agcdp.js logs "Antigravity|壁纸|error"
 node tools/agcdp.js shot now.png

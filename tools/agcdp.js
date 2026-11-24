@@ -8,39 +8,60 @@
 //   node tools/agcdp.js logs [正则]          读取控制台缓冲区里的消息（含 preload 的日志）
 //   node tools/agcdp.js close               让 Antigravity 正常退出（Browser.close）
 //
-// 端口：先试 --remote-debugging-port=9222；没有就从 language_server.log 里找 Antigravity
-// 自己开的内部调试端口（"Successfully discovered Electron WS URL"），所以正常启动也能用。
+// 端口：先读 %APPDATA%\Antigravity\DevToolsActivePort，再试 9222，
+// 最后回退到 language_server.log（Antigravity 2.34+ 需带 --remote-debugging-port=9222 启动）。
 const fs = require('fs');
 const path = require('path');
 
 async function findEndpoint() {
   const candidates = [];
-  const activePortFile = path.join(process.env.APPDATA || '', 'Antigravity', 'DevToolsActivePort');
-  if (fs.existsSync(activePortFile)) {
-    const lines = fs.readFileSync(activePortFile, 'utf8').trim().split(/\r?\n/);
-    if (lines[0] && /^\d+$/.test(lines[0].trim())) {
-      candidates.push({ port: lines[0].trim(), wsPath: lines[1] ? lines[1].trim() : '' });
+  const seenPorts = new Set();
+  const addCandidate = (port, wsPath = '') => {
+    const n = Number(port);
+    if (!Number.isInteger(n) || n < 1 || n > 65535 || seenPorts.has(n)) return;
+    seenPorts.add(n);
+    candidates.push({ port: String(n), wsPath: typeof wsPath === 'string' && wsPath.startsWith('/') ? wsPath : '' });
+  };
+  const appData = process.env.APPDATA || '';
+  if (appData) {
+    const activePortFile = path.join(appData, 'Antigravity', 'DevToolsActivePort');
+    if (fs.existsSync(activePortFile)) {
+      const lines = fs.readFileSync(activePortFile, 'utf8').trim().split(/\r?\n/);
+      if (lines[0] && /^\d+$/.test(lines[0].trim())) {
+        addCandidate(lines[0].trim(), lines[1] ? lines[1].trim() : '');
+      }
     }
   }
-  candidates.push({ port: '9222', wsPath: '' });
+  addCandidate('9222', '');
   for (const c of candidates) {
     try {
       const base = 'http://127.0.0.1:' + c.port;
-      const list = await (await fetch(base + '/json/list')).json();
+      const res = await fetch(base + '/json/list');
+      if (!res.ok) continue;
+      const list = await res.json();
+      if (!Array.isArray(list)) continue;
       const browserWs = c.wsPath ? `ws://127.0.0.1:${c.port}${c.wsPath}` : '';
       return { base, list, browserWs };
     } catch (e) {}
   }
-  const log = path.join(process.env.APPDATA || '', 'Antigravity', 'logs', 'language_server.log');
+  const notFoundErr = '找不到调试端口：Antigravity 未运行，或 2.34+ 未带 --remote-debugging-port=9222 启动。';
+  if (!appData) throw new Error(notFoundErr);
+  const log = path.join(appData, 'Antigravity', 'logs', 'language_server.log');
   const txt = fs.existsSync(log) ? fs.readFileSync(log, 'latin1') : '';
   const all = [...txt.matchAll(/ws:\/\/127\.0\.0\.1:(\d+)\/devtools\/browser\/[a-f0-9-]+/g)];
-  if (!all.length) {
-    throw new Error('找不到调试端口：Antigravity 未运行，或 2.34+ 未带 --remote-debugging-port=9222 启动。');
-  }
-  const port = all[all.length - 1][1];
+  if (!all.length) throw new Error(notFoundErr);
+  const port = Number(all[all.length - 1][1]);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(notFoundErr);
   const base = 'http://127.0.0.1:' + port;
-  const list = await (await fetch(base + '/json/list')).json();
-  return { base, list, browserWs: all[all.length - 1][0] };
+  try {
+    const res = await fetch(base + '/json/list');
+    if (!res.ok) throw new Error(notFoundErr);
+    const list = await res.json();
+    if (!Array.isArray(list)) throw new Error(notFoundErr);
+    return { base, list, browserWs: all[all.length - 1][0] };
+  } catch (e) {
+    throw new Error(notFoundErr);
+  }
 }
 
 async function mainPage() {
