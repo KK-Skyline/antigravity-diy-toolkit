@@ -1,8 +1,12 @@
 # 交接包：Antigravity「失重亚克力」主题 + 壁纸引擎
 
-> 最后更新：2026-11-24（适配 **Antigravity 2.34.0**，分支 `fix/adapt-antigravity-2.34`；当前安装与恢复流程见 [README.md](README.md)，执行前重新核对客户端、Hub、基线与用户授权）
+> 最后更新：2026-11-24（已适配 **Antigravity 2.35.0**，完成插件化架构与极速增量 ASAR 引擎重构；当前安装与恢复流程见 [README.md](README.md)，执行前重新核对客户端、Hub、基线与用户授权）
 > 目的：让下一个会话（或下一个 AI / 你自己）不用翻旧对话，就能接着干。
 > 只写**最终确认正确**的结论；调试过程中被推翻的判断一律不写。
+
+### 🆕 2026-11-24 极速 ASAR 引擎与 2.35.0 实测（`perf/fast-asar-engine`）
+- **8× 提速**：`asar_transaction.mjs` 中的 `inspectArchive()` 改为单次读盘 + 单遍 sidecar 验签，配合事务级 `createTransactionContext()` 消除重复校验；新增 `core/asar_fast_patch.mjs`（`extractSubtree` + `buildPatchedAsar`），仅提取 `dist/` 并在内存中增量改写 ASAR 二进制头与分块 `integrity.blocks`，真实 377 sidecar 包从 ~15.8s 压至 **~1.97s**（可设 `AG_DISABLE_FAST_ASAR=1` 回退全量路径）。
+- **Preload 瘦身与回归**：`plugins/wallpaper-engine/index.js` 消除 `dataUrl` 双倍内联；新增 `tools/fast_asar_regression.mjs` 并接入双平台 CI；已实测兼容 Antigravity **2.35.0** 全部主进程与渲染层钩子。
 
 ### 🆕 2026-11-24 插件化重构（`feat/plugin-architecture`）
 - **内核与插件拆分**：`core/host_env.js`、`core/plugin_loader.js`、`core/injector.js` 负责环境探测、安全校验/依赖解析与私有 `__agBus` 隔离注入；功能拆分为 `plugins/i18n-zh`、`plugins/devtools`、`plugins/theme-obsidian-blue`、`plugins/wallpaper-engine`、`plugins/theme-acrylic`、`plugins/fx-rain`。
