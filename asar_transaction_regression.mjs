@@ -454,7 +454,7 @@ cp.execFileSync = (command, args, options) => {
         ['--require', macShim, enginePath, ...args, '--install-dir', installPath],
         { env: { ...macEnv, ...extraEnv }, encoding: 'utf8' });
     const macCalls = () => fs.readFileSync(macLog, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);
-    for (const operation of [[], ['--tw'], ['--huifu']]) {
+    for (const operation of [['--confirm-unverified-baseline'], ['--tw'], ['--huifu']]) {
         const run = runMac(operation);
         assert.equal(run.status, 0, run.stderr);
     }
