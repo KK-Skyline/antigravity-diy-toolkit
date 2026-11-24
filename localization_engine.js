@@ -124,6 +124,18 @@ if (USE_TW) {
 const SIGNATURE_START = "/* --- ANTIGRAVITY CHINESE LOCALIZATION START --- */";
 const SIGNATURE_END = "/* --- ANTIGRAVITY CHINESE LOCALIZATION END --- */";
 
+const hostEnv = require(path.join(__dirname, 'core', 'host_env'));
+const pluginLoader = require(path.join(__dirname, 'core', 'plugin_loader'));
+const injector = require(path.join(__dirname, 'core', 'injector'));
+
+function getPhase1ActivePlugins() {
+    const enable = ['devtools'];
+    const disable = ['i18n-zh', 'wallpaper-engine', 'theme-acrylic', 'fx-rain'];
+    if (USE_DARK_BLUE) enable.push('theme-obsidian-blue');
+    else disable.push('theme-obsidian-blue');
+    return pluginLoader.resolvePlugins(__dirname, { enable, disable });
+}
+
 // 注入到 Antigravity 主进程的视频壁纸服务 (dist/agWallpaperVideo.js)
 // - 只监听 127.0.0.1、随机端口，只提供 preload 指定的那一个 .mp4 / .webm 文件
 // - 支持 Range（循环 / 拖动）与 CORS（渲染进程画布可读像素，用于取色和亮度自适应）
@@ -357,8 +369,7 @@ function generateJs(configOverride = null) {
         }
     }
 
-    const jsSource = `${SIGNATURE_START}
-(() => {
+    const jsInnerSource = `
     // V12.0 终极隔离版：基于容器回溯的物理隔离引擎
     // 逻辑：不再仅仅检查当前标签，而是向上回溯父级，识别“代码/编辑器”禁区
     const USE_TW = ${USE_TW ? "true" : "false"};
@@ -696,78 +707,6 @@ function generateJs(configOverride = null) {
         try { observer.observe(sr, obsOpts); } catch(e) {}
         return sr;
     };
-
-    // Antigravity 官方质感科技蓝黑皮肤 (Obsidian Dark Blue)
-    const USE_DARK_BLUE_THEME = ${USE_DARK_BLUE ? "true" : "false"};
-    if (USE_DARK_BLUE_THEME) {
-        const injectDarkBlueTheme = () => {
-            if (document.getElementById('antigravity-dark-blue-theme')) return;
-            const style = document.createElement('style');
-            style.id = 'antigravity-dark-blue-theme';
-            style.textContent = [
-                ':root, html, body, body[data-agy-theme], body[data-agy-theme].dark, .dark, .dark-theme, .theme-dark, .vscode-dark, .agy-inset-shell, body[data-agy-theme] .agy-inset-shell {',
-                '  --primary: #4176e6 !important;',
-                '  --primary-foreground: #ffffff !important;',
-                '  --cta: #4176e6 !important;',
-                '  --cta-foreground: #ffffff !important;',
-                '  --link: #5686fe !important;',
-                '  --color-primary: #4176e6 !important;',
-                '  --color-primary-foreground: #ffffff !important;',
-                '  --background: #0d1117 !important;',
-                '  --foreground: #e6edf3 !important;',
-                '  --color-background: #0d1117 !important;',
-                '  --color-foreground: #e6edf3 !important;',
-                '  --shell: #090d13 !important;',
-                '  --shell-canvas: #090d13 !important;',
-                '  --sidebar: #090d13 !important;',
-                '  --sidebar-secondary: #131722 !important;',
-                '  --sidebar-muted: #0d1117 !important;',
-                '  --color-sidebar: #090d13 !important;',
-                '  --color-sidebar-secondary: #131722 !important;',
-                '  --color-sidebar-muted: #0d1117 !important;',
-                '  --card: #161b22 !important;',
-                '  --card-border: #21262d !important;',
-                '  --border: #21262d !important;',
-                '  --glass: #161b22 !important;',
-                '  --glass-border: #21262d !important;',
-                '  --onyx-frame: #0d1117 !important;',
-                '  --onyx-well: #10151d !important;',
-                '  --onyx-raised: #161b22 !important;',
-                '  --onyx-selected: #1c2333 !important;',
-                '  --onyx-key: #1f2736 !important;',
-                '  --color-card: #161b22 !important;',
-                '  --color-card-border: #21262d !important;',
-                '  --color-border: #21262d !important;',
-                '  --secondary: #161b22 !important;',
-                '  --secondary-foreground: #a0a6b5 !important;',
-                '  --muted: #12161f !important;',
-                '  --muted-foreground: #7d8590 !important;',
-                '  --placeholder: #484f58 !important;',
-                '  --success: #22c55e !important;',
-                '  --warning: #f59e0b !important;',
-                '  --error: #ef4444 !important;',
-                '  --code-foreground: #79c0ff !important;',
-                '  --editor-selection-background: rgba(65, 118, 230, 0.35) !important;',
-                '  --color-selection-background: rgba(65, 118, 230, 0.35) !important;',
-                '  --focus-ring-color: rgba(65, 118, 230, 0.45) !important;',
-                '}',
-                '::-webkit-scrollbar { width: 5px !important; height: 5px !important; }',
-                '::-webkit-scrollbar-track { background: transparent !important; }',
-                '::-webkit-scrollbar-thumb { background: #282f3d !important; border-radius: 999px !important; }',
-                '::-webkit-scrollbar-thumb:hover { background: #4176e6 !important; }',
-                '.bg-sidebar-secondary { background-color: #131722 !important; border: 1px solid #21262d !important; }',
-                'button[class*="bg-primary"], .bg-primary { background-color: #4176e6 !important; color: #ffffff !important; }',
-                'button[class*="bg-primary"]:hover, .bg-primary:hover { background-color: #5686fe !important; box-shadow: 0 0 10px rgba(65, 118, 230, 0.4) !important; }',
-                'textarea:focus, input[type="text"]:focus { border-color: #4176e6 !important; box-shadow: 0 0 0 1px #4176e6, 0 0 8px rgba(65, 118, 230, 0.25) !important; }'
-            ].join('\\n');
-            const head = document.head || document.documentElement;
-            if (head) head.appendChild(style);
-        };
-        injectDarkBlueTheme();
-        if (document.readyState === 'loading') {
-            document.addEventListener('DOMContentLoaded', injectDarkBlueTheme);
-        }
-    }
 
     // Wallpaper Engine 实时动态联动换肤引擎 (零依赖、防沙箱拦截)
     const USE_WE_WALLPAPER = ${USE_WALLPAPER ? "true" : "false"};
@@ -1160,12 +1099,23 @@ function generateJs(configOverride = null) {
     setTimeout(startEngine, 1000);
     setTimeout(startEngine, 3000);
     setTimeout(startEngine, 6000);
-})();
-${SIGNATURE_END}`;
+`;
 
     const acrylicCssPath = path.join(__dirname, "theme-acrylic.css");
     const acrylicJson = JSON.stringify(fs.existsSync(acrylicCssPath) ? fs.readFileSync(acrylicCssPath, "utf8") : "");
-    return jsSource.replace("DICT_PLACEHOLDER", () => dictJson).replace("REPLACEMENT_ENTRIES_PLACEHOLDER", () => entriesJson).replace("ACRYLIC_CSS_PLACEHOLDER", () => acrylicJson);
+    const resolvedInner = jsInnerSource.replace("DICT_PLACEHOLDER", () => dictJson).replace("REPLACEMENT_ENTRIES_PLACEHOLDER", () => entriesJson).replace("ACRYLIC_CSS_PLACEHOLDER", () => acrylicJson);
+
+    const { active, allConfigs } = getPhase1ActivePlugins();
+    const baseCtx = injector.buildContextBase({
+        rootDir: __dirname,
+        isV2: false,
+        cliFlags: { USE_TW, USE_DARK_BLUE, USE_WALLPAPER, BRAND_TITLE_MODE },
+        allConfigs,
+        shared: {},
+        hostHelpers: {}
+    });
+    injector.runPrepare(active, baseCtx);
+    return injector.buildPreloadPayload(active, baseCtx, resolvedInner);
 }
 
 function cleanJsContent(content) {
@@ -1205,247 +1155,14 @@ function escapeRegExp(string) {
 }
 
 let wasAppRunning = false;
-
-function macClientPids(installDir) {
-    let output;
-    try { output = child_process.execFileSync('/usr/bin/pgrep', ['-x', 'Antigravity'], { encoding: 'utf8' }); }
-    catch (error) { if (error.status === 1) return []; throw error; }
-    const values = output.trim().split(/\s+/).filter(Boolean);
-    if (values.some(value => !/^[1-9]\d*$/.test(value) || !Number.isSafeInteger(Number(value)))) {
-        throw new Error('无法核验 macOS 客户端 PID。');
-    }
-    const pids = values.map(Number).filter(pid => pid !== process.pid);
-    if (!pids.length) return [];
-    let app = fs.realpathSync(installDir);
-    while (!app.endsWith('.app') && path.dirname(app) !== app) app = path.dirname(app);
-    if (!app.endsWith('.app')) throw new Error('无法定位 macOS 客户端应用包。');
-    const expected = fs.realpathSync(path.join(app, 'Contents', 'MacOS', 'Antigravity'));
-    return pids.filter(pid => {
-        // ponytail: AppKit supplies the main executable; unavailable identity stops rather than guessing from argv or mappings.
-        const script = `ObjC.import('AppKit'); function run(args) {
-            const app = $.NSRunningApplication.runningApplicationWithProcessIdentifier(Number(args[0]));
-            if (!app) return 'null';
-            return JSON.stringify({ pid: Number(app.processIdentifier), path: ObjC.unwrap(app.executableURL.path) });
-        }`;
-        const output = child_process.execFileSync('/usr/bin/osascript',
-            ['-l', 'JavaScript', '-e', script, String(pid)], { encoding: 'utf8' });
-        const identity = JSON.parse(output.trim());
-        if (identity?.pid !== pid || typeof identity.path !== 'string' ||
-            !path.isAbsolute(identity.path) || /[\r\n]/.test(identity.path)) {
-            throw new Error(`无法核验 macOS 客户端进程 ${pid} 的可执行路径。`);
-        }
-        return fs.realpathSync(identity.path) === expected;
-    });
-}
-
-function checkIfAppIsRunning(installDir) {
-    if (process.platform === 'win32') {
-        const stdout = child_process.execFileSync('tasklist', ['/fi', 'imagename eq Antigravity.exe', '/nh'], {
-            encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true
-        });
-        return stdout.split(/\r?\n/).some(line => /^Antigravity\.exe\s/i.test(line.trim()));
-    }
-    if (process.platform === 'darwin') {
-        return macClientPids(installDir).length > 0;
-    }
-    return false;
-}
-
-function closeAntigravityProcesses(installDir) {
-    console.log("[1] 检测到 Antigravity 客户端正在运行，正在关闭以解除文件锁...");
-    try {
-        if (process.platform === 'win32') {
-            child_process.execFileSync('taskkill', ['/f', '/im', 'Antigravity.exe', '/t'], { stdio: 'ignore', windowsHide: true });
-        } else if (process.platform === 'darwin') {
-            for (const pid of macClientPids(installDir)) process.kill(pid, 'SIGTERM');
-        }
-    } catch (e) {
-        // ignore
-    }
-    const start = Date.now();
-    while (Date.now() - start < 1500) {}
-}
-
-function detectInstallationDir(manualDir) {
-    if (manualDir) {
-        if (fs.existsSync(manualDir)) {
-            let resolved = process.platform === 'darwin' ? fs.realpathSync(manualDir) : path.resolve(manualDir);
-            if (fs.statSync(resolved).isFile() && resolved.endsWith('app.asar')) {
-                resolved = path.dirname(resolved);
-            }
-            return resolved;
-        } else {
-            console.error(`[错误] 手动指定的路径不存在: ${manualDir}`);
-            process.exit(1);
-        }
-    }
-
-    const candidates = [];
-    const seenCandidates = new Set();
-    const addCandidate = (candidate) => {
-        if (!candidate) return;
-        const normalized = path.resolve(candidate);
-        const key = normalized.toLowerCase();
-        if (!seenCandidates.has(key)) {
-            candidates.push(normalized);
-            seenCandidates.add(key);
-        }
-    };
-    const hasAntigravityResources = (candidate) => {
-        return fs.existsSync(path.join(candidate, "resources", "app.asar")) ||
-            fs.existsSync(path.join(candidate, "resources", "app.asar.rollback")) ||
-            fs.existsSync(path.join(candidate, "resources", "app.asar.baseline.json")) ||
-            fs.existsSync(path.join(candidate, "app.asar")) ||
-            fs.existsSync(path.join(candidate, "app.asar.rollback")) ||
-            fs.existsSync(path.join(candidate, "Contents", "Resources", "app.asar")) ||
-            fs.existsSync(path.join(candidate, "Contents", "Resources", "app.asar.rollback")) ||
-            fs.existsSync(path.join(candidate, "resources", "app", "product.json"));
-    };
-
-    if (process.platform === 'win32') {
-        addCandidate(process.env.ANTIGRAVITY_INSTALL_DIR);
-        addCandidate(process.env.ANTIGRAVITY_HOME);
-
-        const registryRoots = [
-            'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
-            'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
-            'HKLM\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall'
-        ];
-        for (const root of registryRoots) {
-            try {
-                const output = child_process.execFileSync('reg', ['query', root, '/s', '/f', 'Antigravity', '/d'], { encoding: 'utf-8', stdio: 'pipe' });
-                for (const line of output.split(/\r?\n/)) {
-                    const match = line.match(/^\s*(InstallLocation|DisplayIcon)\s+REG_\w+\s+(.+)$/i);
-                    if (!match) continue;
-                    let value = match[2].trim().replace(/^"|"$/g, '');
-                    if (/Antigravity\.exe/i.test(value)) {
-                        value = path.dirname(value);
-                    }
-                    addCandidate(value);
-                }
-            } catch (e) {
-                // Registry probing is best-effort; fall back to common locations below.
-            }
-        }
-
-        const driveLetters = ['C', 'D', 'E', 'F'];
-        for (const drive of driveLetters) {
-            addCandidate(`${drive}:\\Programs\\Antigravity`);
-            addCandidate(`${drive}:\\Antigravity`);
-        }
-        addCandidate("C:\\Program Files\\Antigravity");
-
-        const localAppdata = process.env.LOCALAPPDATA;
-        if (localAppdata) {
-            addCandidate(path.join(localAppdata, 'Programs', 'antigravity'));
-        }
-    } else if (process.platform === 'darwin') {
-        addCandidate("/Applications/Antigravity.app");
-        addCandidate(path.join(process.env.HOME || '', 'Applications', 'Antigravity.app'));
-    }
-
-    for (const p of candidates) {
-        if (fs.existsSync(p) && hasAntigravityResources(p)) {
-            console.log(`[探测] 成功自动识别到 Antigravity 安装目录: ${p}`);
-            return path.resolve(p);
-        }
-    }
-
-    console.error("[错误] 未找到默认安装目录，请使用 --install-dir 手动指定您的安装路径！");
-    process.exit(1);
-}
-
-function runCommandSync(file, args) {
-    try {
-        const out = child_process.execFileSync(file, args, { encoding: 'utf-8', stdio: 'pipe' });
-        return { success: true, stdout: out, stderr: '' };
-    } catch (e) {
-        return { success: false, stdout: e.stdout || '', stderr: e.stderr || e.message };
-    }
-}
-
-function cleanElectronCache() {
-    let appSupportDir = "";
-    if (process.platform === 'darwin') {
-        appSupportDir = path.join(os.homedir(), 'Library', 'Application Support', 'Antigravity');
-    } else if (process.platform === 'win32') {
-        const appData = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-        appSupportDir = path.join(appData, 'Antigravity');
-    } else {
-        appSupportDir = path.join(os.homedir(), '.config', 'Antigravity');
-    }
-
-    if (!fs.existsSync(appSupportDir)) return;
-
-    const cacheDirs = ['Cache', 'Code Cache', 'GPUCache', 'DawnWebGPUCache', 'DawnGraphiteCache'];
-    let cleanedCount = 0;
-    for (const c of cacheDirs) {
-        const p = path.join(appSupportDir, c);
-        if (fs.existsSync(p)) {
-            try {
-                fs.rmSync(p, { recursive: true, force: true });
-                cleanedCount++;
-            } catch (e) {}
-        }
-    }
-    if (cleanedCount > 0) {
-        console.log(`[缓存] 已自动清理 ${cleanedCount} 个应用缓存目录，避免新旧版本字节码冲突。`);
-    }
-}
-
-function resignAppOnMac(anyPath) {
-    if (process.platform !== 'darwin') return;
-    
-    let targetApp = "";
-    let current = path.resolve(anyPath);
-    for (let i = 0; i < 10; i++) {
-        if (current.endsWith(".app")) {
-            targetApp = current;
-            break;
-        }
-        const parent = path.dirname(current);
-        if (parent === current) break;
-        current = parent;
-    }
-    
-    if (targetApp && fs.existsSync(targetApp)) {
-        try {
-            runCommandSync('xattr', ['-d', '-r', 'com.apple.quarantine', targetApp]);
-        } catch (e) {}
-        console.log(`[签名] 检测到 macOS 平台，正在对应用包进行本地 ad-hoc 深度重签名: ${targetApp} ...`);
-        const signRes = runCommandSync('codesign', ['--force', '--deep', '--sign', '-', targetApp]);
-        if (signRes.success) {
-            console.log(`[签名] 重新签名成功！`);
-        } else {
-            console.warn(`[警告] 重新签名失败。可能会导致应用无法打开。详情:\n${signRes.stderr}\n${signRes.stdout}`);
-        }
-    } else {
-        console.warn(`[警告] 未能从路径 ${anyPath} 识别到有效的 .app 路径，跳过重新签名。`);
-    }
-}
-
-function ensureWritePermission(targetDir) {
-    if (process.platform !== 'darwin') return true;
-    try {
-        fs.accessSync(targetDir, fs.constants.W_OK);
-        return true;
-    } catch (err) {
-        if (process.getuid && process.getuid() !== 0) {
-            console.log("[权限] 检测到当前用户对 macOS 应用目录缺少写入权限，正在尝试请求管理员权限 (sudo) 重新运行...");
-            const args = process.argv.slice(1);
-            const res = child_process.spawnSync('sudo', [process.execPath, ...args], {
-                stdio: 'inherit'
-            });
-            if (res.status === 0) {
-                process.exit(0);
-            } else {
-                console.error("\n[错误] 管理员提权执行失败或用户取消了密码输入。");
-                process.exit(res.status || 1);
-            }
-        }
-        return false;
-    }
-}
+const {
+    checkIfAppIsRunning,
+    closeAntigravityProcesses,
+    detectInstallationDir,
+    cleanElectronCache,
+    resignAppOnMac,
+    ensureWritePermission
+} = hostEnv;
 
 // ==========================================
 // Antigravity 2.0 汉化引擎 (ASAR打包注入模式)
@@ -1743,44 +1460,19 @@ async function install20(resourcesDir, transaction, confirmUnverified, configPla
         console.log(`[修改] 更新弹窗汉化注入成功！`);
     }
 
-    // 3.5 开启 DevTools（2.34+ 由 dist/debugConsole.js 统一门控，同时保留旧版 dist/utils.js 回退）
-    const debugConsolePath = path.join(tempDir, "dist", "debugConsole.js");
-    if (fs.existsSync(debugConsolePath)) {
-        let dcContent = fs.readFileSync(debugConsolePath, 'utf-8');
-        const patchedDc = dcContent.replace(
-            /function isDebugConsoleEnabled\(\)\s*\{\s*return\s+!electron_1\.app\.isPackaged;\s*\}/,
-            'function isDebugConsoleEnabled() {\n    return true;\n}'
-        );
-        if (patchedDc !== dcContent) {
-            fs.writeFileSync(debugConsolePath, patchedDc, 'utf-8');
-            console.log(`[修改] 已通过 debugConsole.js 开启开发者工具权限。`);
-        }
-    }
-    const utilsPath = path.join(tempDir, "dist", "utils.js");
-    if (fs.existsSync(utilsPath)) {
-        let utilsContent = fs.readFileSync(utilsPath, 'utf-8');
-        const patchedUtils = utilsContent.replace('devTools: !electron_1.app.isPackaged', 'devTools: true');
-        if (patchedUtils !== utilsContent) {
-            fs.writeFileSync(utilsPath, patchedUtils, 'utf-8');
-        }
-    }
-
-    // 3.6 注入 keybindings.js (支持 F12 或 Ctrl+Shift+I 快捷键打开控制台，兼容 BaseWindow + WebContentsView)
-    const kbPath = path.join(tempDir, "dist", "keybindings.js");
-    if (fs.existsSync(kbPath)) {
-        let kbContent = fs.readFileSync(kbPath, 'utf-8');
-        if (!kbContent.includes('toggleDevTools')) {
-            const kbTarget = "if (isCmdOrCtrl && input.shift && input.key.toLowerCase() === 'n') {";
-            const kbReplacement = `if ((isCmdOrCtrl && input.shift && input.key.toLowerCase() === 'i') || input.key === 'F12') {
-                const targetContents = (typeof utils_1.getHubWebContents === 'function' ? (0, utils_1.getHubWebContents)(win) : null) ?? win.webContents;
-                targetContents?.toggleDevTools();
-                event.preventDefault();
-            }
-            if (isCmdOrCtrl && input.shift && input.key.toLowerCase() === 'n') {`;
-            kbContent = kbContent.replace(kbTarget, kbReplacement);
-            fs.writeFileSync(kbPath, kbContent, 'utf-8');
-        }
-    }
+    // 3.5 开启 DevTools（由 plugins/devtools 统一处理）
+    const { active, allConfigs } = getPhase1ActivePlugins();
+    const mainCtx = injector.buildContextBase({
+        rootDir: __dirname,
+        tempDir,
+        distDir: path.join(tempDir, 'dist'),
+        isV2: true,
+        cliFlags: { USE_TW, USE_DARK_BLUE, USE_WALLPAPER, BRAND_TITLE_MODE },
+        allConfigs,
+        shared: {},
+        hostHelpers: {}
+    });
+    injector.runPatchMain(active, mainCtx);
 
     // 4. 重新打包
     console.log(`[打包] 正在将修改后的内容打包回 app.asar...`);

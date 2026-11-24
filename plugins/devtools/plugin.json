@@ -1,0 +1,10 @@
+{
+  "id": "devtools",
+  "name": "DevTools Unlocker",
+  "version": "1.0.0",
+  "layerOrder": 5,
+  "defaultEnabled": true,
+  "requires": [],
+  "conflictsWith": [],
+  "settingsSchema": {}
+}

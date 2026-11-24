@@ -27,3 +27,4 @@ proxy_config/
 # Runtime user state & custom configs
 last_good_wallpaper.json
 wallpaper_custom.json
+plugins.config.json
