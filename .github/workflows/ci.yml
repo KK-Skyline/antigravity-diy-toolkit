@@ -6,6 +6,7 @@ on:
       - main
       - 'fix/**'
       - 'feat/**'
+      - 'perf/**'
   pull_request:
     branches:
       - main
@@ -47,3 +48,6 @@ jobs:
 
       - name: Run plugin architecture regression
         run: node tools/plugin_architecture_regression.mjs
+
+      - name: Run fast ASAR engine regression
+        run: node tools/fast_asar_regression.mjs

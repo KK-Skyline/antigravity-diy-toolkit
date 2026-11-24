@@ -128,7 +128,7 @@ function buildWallpaperBaseCss(wp) {
         '  inset: -10px !important;',
         '  z-index: 0 !important;',
         '  pointer-events: none !important;',
-        wp && wp.dataUrl ? '  background: url("' + wp.dataUrl + '") center / cover no-repeat !important;' : '  background: none !important;',
+        '  background: none !important;',
         '  filter: ' + artFilter + ' !important;',
         '}',
         'body::after {',
