@@ -1,0 +1,10 @@
+{
+  "id": "wallpaper-engine",
+  "name": "Wallpaper Engine Integration",
+  "version": "1.0.0",
+  "layerOrder": 15,
+  "defaultEnabled": false,
+  "requires": [],
+  "conflictsWith": [],
+  "settingsSchema": {}
+}

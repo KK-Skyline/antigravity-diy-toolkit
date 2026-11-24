@@ -1,0 +1,22 @@
+{
+  "id": "fx-rain",
+  "name": "Ambient Rain Canvas Effect",
+  "version": "1.0.0",
+  "layerOrder": 25,
+  "defaultEnabled": false,
+  "requires": [],
+  "conflictsWith": [],
+  "settingsSchema": {
+    "mode": {
+      "type": "enum",
+      "values": ["auto", "always", "off"],
+      "default": "auto"
+    },
+    "intensity": {
+      "type": "number",
+      "min": 0.1,
+      "max": 2.0,
+      "default": 0.6
+    }
+  }
+}

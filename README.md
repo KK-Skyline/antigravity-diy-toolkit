@@ -125,3 +125,12 @@ node localization_engine.js --huifu --confirm-unverified-baseline
 - 本项目衍生自 [qqxpee/antigravity2-cn](https://github.com/qqxpee/antigravity2-cn)，保留原项目及贡献者的归属。上游目前未提供许可证文件，再发布及本仓库整体授权范围待确认。
 - 此仓库未包含 Google Antigravity 或 Wallpaper Engine 的安装文件，相关商标归各自权利人所有。
 - 问题反馈请使用本仓库的 [Issues](https://github.com/KK-Skyline/antigravity-diy-toolkit/issues)。
+
+---
+
+## 🧩 插件化架构与纯换肤模式
+
+本项目已将汉化、DevTools、黑曜石蓝、Wallpaper Engine、失重亚克力主题及雨滴特效拆分为 `plugins/*` 下的独立插件，由 `core/plugin_loader.js` 与 `core/injector.js` 统一编排：
+- **纯换肤（不装汉化）**：`node localization_engine.js --wallpaper --no-i18n`（或 `--only-skin`），仅注入壁纸与主题，不注入中文翻译；
+- **按插件开关**：支持 `--enable <id,...>` / `--disable <id,...>`（可用插件：`i18n-zh`、`devtools`、`theme-obsidian-blue`、`wallpaper-engine`、`theme-acrylic`、`fx-rain`）；
+- **自定义配置**：可复制 `plugins.config.example.json` 为 `plugins.config.json`（已被 `.gitignore` 忽略）。

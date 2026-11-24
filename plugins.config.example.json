@@ -1,0 +1,20 @@
+{
+  "enabled": {
+    "i18n-zh": true,
+    "devtools": true,
+    "theme-obsidian-blue": false,
+    "wallpaper-engine": false,
+    "theme-acrylic": false,
+    "fx-rain": false
+  },
+  "settings": {
+    "i18n-zh": {
+      "locale": "zh-CN",
+      "brandTitle": "english"
+    },
+    "fx-rain": {
+      "mode": "auto",
+      "intensity": 0.6
+    }
+  }
+}

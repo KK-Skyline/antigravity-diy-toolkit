@@ -44,3 +44,6 @@ jobs:
 
       - name: Run Wallpaper Hub security regression
         run: node security_regression.js
+
+      - name: Run plugin architecture regression
+        run: node tools/plugin_architecture_regression.mjs

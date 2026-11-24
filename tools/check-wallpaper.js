@@ -2,7 +2,9 @@
 // 一眼看清 Antigravity 当前的壁纸、主题与 2.34+ Shell/Sheet 透明状态
 (async () => {
   const s = document.getElementById('antigravity-we-style');
+  const acrylicStyle = document.getElementById('antigravity-acrylic-theme');
   const css = s ? s.textContent : '';
+  const acrylicCss = acrylicStyle ? acrylicStyle.textContent : '';
   const i = css.indexOf('url("data:');
   const v = document.getElementById('ag-wallpaper-video');
   const rain = document.getElementById('ag-rain-canvas');
@@ -16,7 +18,7 @@
   const insetCs = getComputedStyle(insetEl);
   return JSON.stringify({
     appVersion: window.__APP_CONFIG__ && window.__APP_CONFIG__.appVersion,
-    themeLoaded: css.includes('失重亚克力'),
+    themeLoaded: acrylicCss.includes('失重亚克力') || css.includes('失重亚克力'),
     agyThemeAttr: !!document.body?.hasAttribute('data-agy-theme'),
     browserHole: document.body?.getAttribute('data-has-browser-hole') ?? null,
     shellBg: {

@@ -616,6 +616,12 @@ cp.execFileSync = (command, args, options) => {
             fs.copyFileSync(new URL(name, import.meta.url), path.join(isolatedEngine, name));
         }
         fs.cpSync(new URL('./dicts/', import.meta.url), path.join(isolatedEngine, 'dicts'), { recursive: true });
+        if (fs.existsSync(new URL('./core/', import.meta.url))) {
+            fs.cpSync(new URL('./core/', import.meta.url), path.join(isolatedEngine, 'core'), { recursive: true });
+        }
+        if (fs.existsSync(new URL('./plugins/', import.meta.url))) {
+            fs.cpSync(new URL('./plugins/', import.meta.url), path.join(isolatedEngine, 'plugins'), { recursive: true });
+        }
         fs.symlinkSync(path.join(path.dirname(enginePath), 'node_modules'), path.join(isolatedEngine, 'node_modules'), 'dir');
         fs.writeFileSync(path.join(isolatedEngine, 'wallpaper_engine_reader.js'),
             'module.exports = { getActiveWallpaper: () => null };\n');

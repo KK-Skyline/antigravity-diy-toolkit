@@ -1,0 +1,21 @@
+{
+  "id": "i18n-zh",
+  "name": "Chinese Localization (zh-CN / zh-TW)",
+  "version": "1.0.0",
+  "layerOrder": 30,
+  "defaultEnabled": true,
+  "requires": [],
+  "conflictsWith": [],
+  "settingsSchema": {
+    "locale": {
+      "type": "enum",
+      "values": ["zh-CN", "zh-TW"],
+      "default": "zh-CN"
+    },
+    "brandTitle": {
+      "type": "enum",
+      "values": ["english", "hidden", "translated"],
+      "default": "english"
+    }
+  }
+}

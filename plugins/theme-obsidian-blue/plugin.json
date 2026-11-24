@@ -1,0 +1,10 @@
+{
+  "id": "theme-obsidian-blue",
+  "name": "Obsidian Dark Blue Theme",
+  "version": "1.0.0",
+  "layerOrder": 10,
+  "defaultEnabled": false,
+  "requires": [],
+  "conflictsWith": [],
+  "settingsSchema": {}
+}
