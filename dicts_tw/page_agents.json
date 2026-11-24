@@ -24,5 +24,13 @@
     "No subagents": "尚無子代理",
     "No active skills": "尚無啟用中的技能",
     "Agent Auto-Fix Lints": "代理自動修復 Lint 錯誤",
-    "When enabled, agent is given awareness of lint errors created by its edits and may fix them without explicit user prompting.": "啟用後，代理將能感知其編輯所產生的 Lint 錯誤，並可在未經使用者明確提示的情況下嘗試修復。"
+    "When enabled, agent is given awareness of lint errors created by its edits and may fix them without explicit user prompting.": "啟用後，代理將能感知其編輯所產生的 Lint 錯誤，並可在未經使用者明確提示的情況下嘗試修復。",
+    "Agent Edits": "代理編輯",
+    "Agent terminated due to error": "代理因錯誤終止",
+    "Files modified by the agent in this conversation": "代理在本次對話中修改的檔案",
+    "Background Task Output": "背景任務輸出",
+    "Select another model": "選擇其他模型",
+    "See Plans": "檢視方案",
+    "Refreshed credentials for all automations.": "已重新整理所有自動化的憑證。",
+    "Failed to refresh credentials": "重新整理憑證失敗"
 }

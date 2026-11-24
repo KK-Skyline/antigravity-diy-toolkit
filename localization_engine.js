@@ -95,7 +95,9 @@ if (USE_TW) {
         "[启动] 检测到安装前反重力客户端处于开启状态，正在重新启动客户端...": "[啟動] 偵測到安裝前反重力用戶端處於開啟狀態，正在重新啟動用戶端...",
         "[启动] 客户端启动成功！": "[啟動] 用戶端啟動成功！",
         "[警告] 未找到客户端主程序: ": "[警告] 未找到用戶端主程式: ",
-        "[警告] 客户端启动失败: ": "[警告] 用戶端啟動失敗: "
+        "[警告] 客户端启动失败: ": "[警告] 用戶端啟動失敗: ",
+        "[修改] 已通过 debugConsole.js 开启开发者工具权限。": "[修改] 已透過 debugConsole.js 開啟開發人員工具權限。",
+        "[跳过] 当前版本的 loadingOverlay.js 为纯图标加载页，无需文本汉化。": "[跳過] 目前版本的 loadingOverlay.js 為純圖示載入頁，無需文字漢化。"
     };
     const translateMsg = (args) => {
         return args.map(arg => {
@@ -370,8 +372,8 @@ function generateJs(configOverride = null) {
     // 轻量级安全隔离：跳过脚本、样式、代码块(pre/code)、编辑器区域以及终端容器
     const SKIP_TAGS = ['SCRIPT', 'STYLE', 'PRE', 'CODE'];
 
-    // 代码及编辑器隔离选择器：排除代码块、编辑器、文件预览器、代码差异区、终端及语法高亮 Token
-    const CODE_ISOLATION_SELECTOR = 'pre, code, .monaco-editor, .cm-editor, .cm-line, [contenteditable="true"], .terminal, .xterm, .code-line, .code-block, .line-content, [aria-label="File Viewer"], [data-file-uri], [class*="diffEditor"], .token, .hljs, [class*="mtk"]';
+    // 代码及编辑器隔离选择器：排除代码块、编辑器、文件预览器、代码差异区、终端、浏览器地址栏与嵌入视口及语法高亮 Token
+    const CODE_ISOLATION_SELECTOR = 'pre, code, .monaco-editor, .cm-editor, .cm-line, [contenteditable="true"], .terminal, .xterm, .code-line, .code-block, .line-content, [aria-label="File Viewer"], [data-file-uri], [class*="diffEditor"], .token, .hljs, [class*="mtk"], [data-testid="background-task-command"], [data-testid="browser-url-display"], [data-browser-hole], webview';
 
     function isCodeOrEditor(node) {
         try {
@@ -645,12 +647,13 @@ function generateJs(configOverride = null) {
                         return USE_TW ? "以此身分傳送意見回饋：" : "以如下身份发送反馈：";
                     });
                 } else {
-                    // 2. 长句子串滑动替换与前缀截断智能匹配 (缩短至前 18 字符即可高精度命中)
+                    // 2. 长句子串滑动替换与省略号截断智能匹配（仅对真实以 "..." 截断的文本启用前缀匹配，避免劫持同前缀报错信息）
+                    const truncatedPrefix = valNorm.endsWith('...') && valLower.length >= 27 ? valLower.slice(0, -3) : '';
                     for (const [key, translated] of longEntries) {
                         if (key.length > 15 && valNorm.includes(key)) {
                             newVal = newVal.split(key).join(translated);
                             break;
-                        } else if (key.length >= 18 && valNorm.length >= 18 && valLower.slice(0, 18) === key.slice(0, 18).toLowerCase()) {
+                        } else if (truncatedPrefix && key.length >= 32 && key.toLowerCase().startsWith(truncatedPrefix)) {
                             newVal = translated;
                             break;
                         }
@@ -702,9 +705,11 @@ function generateJs(configOverride = null) {
             const style = document.createElement('style');
             style.id = 'antigravity-dark-blue-theme';
             style.textContent = [
-                ':root, .dark, .dark-theme, .vscode-dark {',
+                ':root, html, body, body[data-agy-theme], body[data-agy-theme].dark, .dark, .dark-theme, .theme-dark, .vscode-dark, .agy-inset-shell, body[data-agy-theme] .agy-inset-shell {',
                 '  --primary: #4176e6 !important;',
                 '  --primary-foreground: #ffffff !important;',
+                '  --cta: #4176e6 !important;',
+                '  --cta-foreground: #ffffff !important;',
                 '  --link: #5686fe !important;',
                 '  --color-primary: #4176e6 !important;',
                 '  --color-primary-foreground: #ffffff !important;',
@@ -712,6 +717,8 @@ function generateJs(configOverride = null) {
                 '  --foreground: #e6edf3 !important;',
                 '  --color-background: #0d1117 !important;',
                 '  --color-foreground: #e6edf3 !important;',
+                '  --shell: #090d13 !important;',
+                '  --shell-canvas: #090d13 !important;',
                 '  --sidebar: #090d13 !important;',
                 '  --sidebar-secondary: #131722 !important;',
                 '  --sidebar-muted: #0d1117 !important;',
@@ -721,6 +728,13 @@ function generateJs(configOverride = null) {
                 '  --card: #161b22 !important;',
                 '  --card-border: #21262d !important;',
                 '  --border: #21262d !important;',
+                '  --glass: #161b22 !important;',
+                '  --glass-border: #21262d !important;',
+                '  --onyx-frame: #0d1117 !important;',
+                '  --onyx-well: #10151d !important;',
+                '  --onyx-raised: #161b22 !important;',
+                '  --onyx-selected: #1c2333 !important;',
+                '  --onyx-key: #1f2736 !important;',
                 '  --color-card: #161b22 !important;',
                 '  --color-card-border: #21262d !important;',
                 '  --color-border: #21262d !important;',
@@ -1171,19 +1185,17 @@ function cleanMenuJsContent(content) {
 }
 
 function cleanTrayJsContent(content) {
-    const startMark = "/* --- TRAY TRANSLATION START --- */";
-    const endMark = "/* --- TRAY TRANSLATION END --- */";
-    const startIdx = content.indexOf(startMark);
-    const endIdx = content.indexOf(endMark);
-    if (startIdx !== -1 && endIdx !== -1 && startIdx < endIdx) {
-        content = content.substring(0, startIdx) + content.substring(endIdx + endMark.length);
-    }
-    const dblStartMark = "/* --- TRAY DOUBLE CLICK START --- */";
-    const dblEndMark = "/* --- TRAY DOUBLE CLICK END --- */";
-    const dblStartIdx = content.indexOf(dblStartMark);
-    const dblEndIdx = content.indexOf(dblEndMark);
-    if (dblStartIdx !== -1 && dblEndIdx !== -1 && dblStartIdx < dblEndIdx) {
-        content = content.substring(0, dblStartIdx) + content.substring(dblEndIdx + dblEndMark.length);
+    const pairs = [
+        ["/* --- TRAY TRANSLATION START --- */", "/* --- TRAY TRANSLATION END --- */"],
+        ["/* --- TRAY DOUBLE CLICK START --- */", "/* --- TRAY DOUBLE CLICK END --- */"],
+        ["/* --- TRAY INSERT TRANSLATION START --- */", "/* --- TRAY INSERT TRANSLATION END --- */"]
+    ];
+    for (const [startMark, endMark] of pairs) {
+        const startIdx = content.indexOf(startMark);
+        const endIdx = content.indexOf(endMark);
+        if (startIdx !== -1 && endIdx !== -1 && startIdx < endIdx) {
+            content = content.substring(0, startIdx) + content.substring(endIdx + endMark.length);
+        }
     }
     return content;
 }
@@ -1526,6 +1538,8 @@ async function install20(resourcesDir, transaction, confirmUnverified, configPla
         'Split Conversation Horizontally': '水平分割對話',
         'Split Conversation Vertically': '垂直分割對話',
         'Find in conversation': '在對話中尋找',
+        'Connect to WSL': '連線到 WSL',
+        'Reopen Locally': '在本機重新開啟',
         'Version': '版本'
     }` : `{
         'File': '文件',
@@ -1557,6 +1571,8 @@ async function install20(resourcesDir, transaction, confirmUnverified, configPla
         'Split Conversation Horizontally': '水平拆分会话',
         'Split Conversation Vertically': '垂直拆分会话',
         'Find in conversation': '在会话中查找',
+        'Connect to WSL': '连接到 WSL',
+        'Reopen Locally': '在本地重新打开',
         'Version': '版本'
     }`};
     function translateMenu(items) {
@@ -1587,7 +1603,17 @@ async function install20(resourcesDir, transaction, confirmUnverified, configPla
         const targetStr = "electron_1.Menu.setApplicationMenu(menu);";
         const idx = menuCleaned.indexOf(targetStr);
         if (idx !== -1) {
-            const patchedMenuContent = menuCleaned.substring(0, idx) + menuTranslationJs + "\n    " + menuCleaned.substring(idx);
+            let patchedMenuContent = menuCleaned.substring(0, idx) + menuTranslationJs + "\n    " + menuCleaned.substring(idx);
+            // 2.34+ 异步挂载 WSL 菜单时通过 addItemToSubmenu(menu, 'File', ...) 查找英文菜单名，需兼容已汉化的菜单名并支持 CN/TW 幂等切换
+            const wslLabelConnect = USE_TW ? '連線到 WSL' : '连接到 WSL';
+            const wslLabelLocal = USE_TW ? '在本機重新開啟' : '在本地重新打开';
+            patchedMenuContent = patchedMenuContent
+                .replace(/return \{ label: '(?:Connect to WSL|连接到 WSL|連線到 WSL)', submenu \};/, `return { label: '${wslLabelConnect}', submenu };`)
+                .replace(/return \{ label: '(?:Reopen Locally|在本地重新打开|在本機重新開啟)', click: \(\) => relaunchWithWslDistro\(''\) \};/, `return { label: '${wslLabelLocal}', click: () => relaunchWithWslDistro('') };`)
+                .replace(
+                    "const submenuItem = appMenu.items.find((item) => item.label === submenuLabel);",
+                    `const submenuAliases = submenuLabel === 'File' ? ['File', '文件', '檔案', '文件(&F)', '檔案(&F)'] : [submenuLabel];\n    const submenuItem = appMenu.items.find((item) => submenuAliases.includes(item.label) || (submenuLabel === 'File' && /^(文件|檔案)/.test(item.label || '')));`
+                );
             fs.writeFileSync(menuPath, patchedMenuContent, 'utf-8');
             console.log(`[修改] 菜单汉化注入成功！`);
         } else {
@@ -1604,37 +1630,58 @@ async function install20(resourcesDir, transaction, confirmUnverified, configPla
         // 先清理已有的汉化块
         let trayCleaned = cleanTrayJsContent(trayContent);
         
-        // 1. 注入 createTray 里的翻译块 (带标记)
-        const targetCreate = "function createTray(actions) {";
-        const replacementCreate = `function createTray(actions) {
-    /* --- TRAY TRANSLATION START --- */
+        // 1. 注入 createTray 里的翻译块（兼容 2.19 createTray(actions) 与 2.34+ createTray(actions, onClick)）
+        const createTrayRegex = /function createTray\(([^)]*)\)\s*\{/;
+        const trayTransBlock = `/* --- TRAY TRANSLATION START --- */
     const translations = ${USE_TW ? `{
         'No agents running': '無執行中的代理',
         'Open Antigravity': '開啟 Antigravity',
+        'Connect to WSL': '連線到 WSL',
+        'Reopen Locally': '在本機重新開啟',
         'Quit': '結束'
     }` : `{
         'No agents running': '无运行中的智能体',
         'Open Antigravity': '打开反重力智能编程',
+        'Connect to WSL': '连接到 WSL',
+        'Reopen Locally': '在本地重新打开',
         'Quit': '退出'
     }`};
     for (const item of actions) {
-        if (translations[item.label]) {
+        if (item && translations[item.label]) {
             item.label = translations[item.label];
         }
     }
     /* --- TRAY TRANSLATION END --- */`;
         
-        let trayPatched = trayCleaned.replace(targetCreate, replacementCreate);
+        let trayPatched = trayCleaned.replace(createTrayRegex, (m, params) => `function createTray(${params}) {\n    ${trayTransBlock}`);
         
-        // 2. 注入系統匣圖示點兩下彈出/聚焦 Antigravity 介面事件
+        // 1b. 注入 2.34+ insertTrayMenuItem 动态菜单项翻译（如异步追加的 WSL 菜单）
+        const insertTrayRegex = /function insertTrayMenuItem\(([^)]*)\)\s*\{/;
+        const trayInsertBlock = `/* --- TRAY INSERT TRANSLATION START --- */
+    const insertTranslations = ${USE_TW ? `{
+        'Connect to WSL': '連線到 WSL',
+        'Reopen Locally': '在本機重新開啟'
+    }` : `{
+        'Connect to WSL': '连接到 WSL',
+        'Reopen Locally': '在本地重新打开'
+    }`};
+    if (options && insertTranslations[options.label]) {
+        options = { ...options, label: insertTranslations[options.label] };
+    }
+    /* --- TRAY INSERT TRANSLATION END --- */`;
+        trayPatched = trayPatched.replace(insertTrayRegex, (m, params) => `function insertTrayMenuItem(${params}) {\n    ${trayInsertBlock}`);
+
+        // 2. 注入系统托盘图标双击弹出/聚焦 Antigravity 界面事件（优先使用 2.34+ getLocalHubWindows，兼容 BaseWindow 与 BrowserWindow）
         const dblClickTarget = /tray\.setContextMenu\(contextMenu\);/;
         const dblClickReplacement = `tray.setContextMenu(contextMenu);
     /* --- TRAY DOUBLE CLICK START --- */
     const openAction = actions.find(item => item && typeof item.click === 'function' && !['Quit', '退出', '結束'].includes(item.label));
     if (openAction) {
         tray.on('double-click', () => {
-            const wins = electron_1.BrowserWindow.getAllWindows();
-            if (wins.length > 0 && wins[0].isMinimized()) {
+            const wins = (typeof utils_1 !== 'undefined' && typeof utils_1.getLocalHubWindows === 'function' ? (0, utils_1.getLocalHubWindows)() : null)
+                || (electron_1.BaseWindow && typeof electron_1.BaseWindow.getAllWindows === 'function' ? electron_1.BaseWindow.getAllWindows() : null)
+                || electron_1.BrowserWindow.getAllWindows();
+            if (wins.length > 0 && wins[0].isMinimized && wins[0].isMinimized()) {
                 wins[0].restore();
             }
             openAction.click();
@@ -1643,8 +1690,8 @@ async function install20(resourcesDir, transaction, confirmUnverified, configPla
     /* --- TRAY DOUBLE CLICK END --- */`;
         trayPatched = trayPatched.replace(dblClickTarget, dblClickReplacement);
 
-        // 3. 使用正则替换 updateTrayAgentCount 里的动态显示文本
-        const countRegex = /countItem\.label\s*=\s*\([\s\S]*?' running';/g;
+        // 3. 使用正则替换 updateTrayAgentCount 里的动态显示文本（兼容 EN / CN / TW 幂等重注入）
+        const countRegex = /countItem\.label\s*=\s*(?:\([\s\S]*?' running'|count > 0 \? `\$\{count\} (?:个智能体运行中|個代理執行中)` : '(?:无运行中的智能体|無執行中的代理)');/g;
         const replacementCount = USE_TW 
             ? "countItem.label = count > 0 ? `${count} 個代理執行中` : '無執行中的代理';"
             : "countItem.label = count > 0 ? `${count} 个智能体运行中` : '无运行中的智能体';";
@@ -1657,20 +1704,20 @@ async function install20(resourcesDir, transaction, confirmUnverified, configPla
     // 3.3 注入 loadingOverlay.js (加载页汉化)
     const loadingPath = path.join(tempDir, "dist", "loadingOverlay.js");
     if (fs.existsSync(loadingPath)) {
-        console.log(`[修改] 正在向 loadingOverlay.js 注入加载页汉化...`);
         let loadingContent = fs.readFileSync(loadingPath, 'utf-8');
-        
         const replacementText = USE_TW
             ? '<div class="text">正在載入 Antigravity…</div>'
             : '<div class="text">正在加载 Antigravity…</div>';
-        
-        loadingContent = loadingContent
+        const updatedLoading = loadingContent
             .replace('<div class="text">Loading Antigravity</div>', replacementText)
             .replace('<div class="text">反重力引擎已啟動，正在努力擺脫地心引力...</div>', replacementText)
             .replace('<div class="text">反重力引擎已启动，正在努力摆脱地心引力...</div>', replacementText);
-        
-        fs.writeFileSync(loadingPath, loadingContent, 'utf-8');
-        console.log(`[修改] 加载页汉化注入成功！`);
+        if (updatedLoading !== loadingContent) {
+            fs.writeFileSync(loadingPath, updatedLoading, 'utf-8');
+            console.log(`[修改] 加载页汉化注入成功！`);
+        } else {
+            console.log(`[跳过] 当前版本的 loadingOverlay.js 为纯图标加载页，无需文本汉化。`);
+        }
     }
 
     // 3.4 注入 updater.js (更新弹窗汉化)
@@ -1696,22 +1743,37 @@ async function install20(resourcesDir, transaction, confirmUnverified, configPla
         console.log(`[修改] 更新弹窗汉化注入成功！`);
     }
 
-    // 3.5 注入 utils.js (开启 DevTools)
+    // 3.5 开启 DevTools（2.34+ 由 dist/debugConsole.js 统一门控，同时保留旧版 dist/utils.js 回退）
+    const debugConsolePath = path.join(tempDir, "dist", "debugConsole.js");
+    if (fs.existsSync(debugConsolePath)) {
+        let dcContent = fs.readFileSync(debugConsolePath, 'utf-8');
+        const patchedDc = dcContent.replace(
+            /function isDebugConsoleEnabled\(\)\s*\{\s*return\s+!electron_1\.app\.isPackaged;\s*\}/,
+            'function isDebugConsoleEnabled() {\n    return true;\n}'
+        );
+        if (patchedDc !== dcContent) {
+            fs.writeFileSync(debugConsolePath, patchedDc, 'utf-8');
+            console.log(`[修改] 已通过 debugConsole.js 开启开发者工具权限。`);
+        }
+    }
     const utilsPath = path.join(tempDir, "dist", "utils.js");
     if (fs.existsSync(utilsPath)) {
         let utilsContent = fs.readFileSync(utilsPath, 'utf-8');
-        utilsContent = utilsContent.replace('devTools: !electron_1.app.isPackaged', 'devTools: true');
-        fs.writeFileSync(utilsPath, utilsContent, 'utf-8');
+        const patchedUtils = utilsContent.replace('devTools: !electron_1.app.isPackaged', 'devTools: true');
+        if (patchedUtils !== utilsContent) {
+            fs.writeFileSync(utilsPath, patchedUtils, 'utf-8');
+        }
     }
 
-    // 3.6 注入 keybindings.js (支持 F12 或 Ctrl+Shift+I 快捷键打开控制台)
+    // 3.6 注入 keybindings.js (支持 F12 或 Ctrl+Shift+I 快捷键打开控制台，兼容 BaseWindow + WebContentsView)
     const kbPath = path.join(tempDir, "dist", "keybindings.js");
     if (fs.existsSync(kbPath)) {
         let kbContent = fs.readFileSync(kbPath, 'utf-8');
         if (!kbContent.includes('toggleDevTools')) {
             const kbTarget = "if (isCmdOrCtrl && input.shift && input.key.toLowerCase() === 'n') {";
             const kbReplacement = `if ((isCmdOrCtrl && input.shift && input.key.toLowerCase() === 'i') || input.key === 'F12') {
-                win.webContents.toggleDevTools();
+                const targetContents = (typeof utils_1.getHubWebContents === 'function' ? (0, utils_1.getHubWebContents)(win) : null) ?? win.webContents;
+                targetContents?.toggleDevTools();
                 event.preventDefault();
             }
             if (isCmdOrCtrl && input.shift && input.key.toLowerCase() === 'n') {`;

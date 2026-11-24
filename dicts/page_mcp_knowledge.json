@@ -160,5 +160,17 @@
     "Token budget exceeded": "Token 预算已超限",
     "Large customizations will be truncated.": "过大的自定义内容将被截断。",
     "Large customizations will be truncated automatically.": "过大的自定义内容将被自动截断。",
-    "Large customizations will be truncated": "过大的自定义内容将被截断"
+    "Large customizations will be truncated": "过大的自定义内容将被截断",
+    "Manage Hooks": "管理钩子",
+    "Add MCP Server": "添加 MCP 服务器",
+    "Search MCP servers by name": "按名称搜索 MCP 服务器",
+    "Refresh MCP servers": "刷新 MCP 服务器",
+    "MCP Install Error:": "MCP 安装错误：",
+    "UI Plugins": "界面插件",
+    "Connectors": "连接器",
+    "Search connectors": "搜索连接器",
+    "Context Providers": "上下文提供者",
+    "Default Customizations": "默认自定义配置",
+    "Sidecar error": "Sidecar 错误",
+    "Disabled. Open Details to finish setup or enable.": "已禁用。打开详情完成设置或启用。"
 }

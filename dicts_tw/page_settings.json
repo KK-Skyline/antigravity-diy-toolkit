@@ -524,5 +524,17 @@
     "active conversations.": "個活躍對話。",
     "active conversations": "個活躍對話",
     "active conversation.": "個活躍對話。",
-    "active conversation": "個活躍對話"
+    "active conversation": "個活躍對話",
+    "Accounts": "帳戶",
+    "Connections": "連線",
+    "Interface Layout": "介面配置",
+    "Keybinding Scheme": "快捷鍵方案",
+    "System default": "系統預設",
+    "Device Name": "裝置名稱",
+    "Enter device name...": "輸入裝置名稱...",
+    "Search flags": "搜尋實驗性旗標",
+    "Refresh quota and credits data": "重新整理配額與額度資料",
+    "Enable sandbox mode": "啟用沙箱模式",
+    "Permission Details": "權限詳細資料",
+    "Edit permission target": "編輯權限目標"
 }

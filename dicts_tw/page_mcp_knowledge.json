@@ -160,5 +160,17 @@
     "Token budget exceeded": "Token 預算額度已超限",
     "Large customizations will be truncated.": "過長的大型自訂元件將被截斷。",
     "Large customizations will be truncated automatically.": "過長的大型自訂元件將會被自動截斷。",
-    "Large customizations will be truncated": "過長的大型自訂元件將被截斷"
+    "Large customizations will be truncated": "過長的大型自訂元件將被截斷",
+    "Manage Hooks": "管理勾點",
+    "Add MCP Server": "新增 MCP 伺服器",
+    "Search MCP servers by name": "依名稱搜尋 MCP 伺服器",
+    "Refresh MCP servers": "重新整理 MCP 伺服器",
+    "MCP Install Error:": "MCP 安裝錯誤：",
+    "UI Plugins": "介面外掛程式",
+    "Connectors": "連接器",
+    "Search connectors": "搜尋連接器",
+    "Context Providers": "上下文提供者",
+    "Default Customizations": "預設自訂設定",
+    "Sidecar error": "Sidecar 錯誤",
+    "Disabled. Open Details to finish setup or enable.": "已停用。開啟詳細資料完成設定或啟用。"
 }

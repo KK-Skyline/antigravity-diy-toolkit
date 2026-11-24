@@ -1,5 +1,5 @@
 /* ==================================================================
-   Antigravity「失重亚克力」主题
+   Antigravity「失重亚克力」主题（适配 Antigravity 2.34+ Shell/Sheet 架构）
    —— 由 localization_engine.js --wallpaper 在打包时读入并注入 preload.js
    设计稿：design/acrylic_preview.html
 
@@ -46,20 +46,36 @@
 @property --ag-scrim    { syntax: '<number>'; inherits: true; initial-value: .34; }
 html { transition: --ag-glass-a 1.2s ease, --ag-wp-bright 1.2s ease, --ag-scrim 1.2s ease; }
 
-/* ---------- 覆盖 Antigravity 自身的颜色变量（它会在 .dark 等元素上重新声明，所以要一起覆盖） ---------- */
-:root, .dark, .dark-theme, .theme-dark, .vscode-dark, .theme-standalone, [data-theme="dark"] {
+/* ---------- 覆盖 Antigravity 自身的颜色变量（含 2.34+ body[data-agy-theme] / --shell / --onyx-*） ---------- */
+:root, html, body, body[data-agy-theme], body[data-agy-theme].dark,
+.dark, .dark-theme, .theme-dark, .vscode-dark, .theme-standalone, [data-theme="dark"],
+.agy-inset-shell, body[data-agy-theme] .agy-inset-shell {
   --background: transparent !important;            --color-background: transparent !important;
   --sidebar: transparent !important;               --color-sidebar: transparent !important;
+  --shell: transparent !important;                 --shell-canvas: transparent !important;
+  --content: transparent !important;
+  --home-glow: transparent !important;
   --sidebar-muted: var(--ag-state-hover) !important;        --color-sidebar-muted: var(--ag-state-hover) !important;
   --sidebar-secondary: var(--ag-state-selected) !important; --color-sidebar-secondary: var(--ag-state-selected) !important;
   --card: hsl(var(--ag-tint-h) 20% 8% / .5) !important;     --color-card: hsl(var(--ag-tint-h) 20% 8% / .5) !important;
   --card-border: var(--ag-glass-edge) !important;           --color-card-border: var(--ag-glass-edge) !important;
   --border: var(--ag-glass-edge) !important;                --color-border: var(--ag-glass-edge) !important;
+  --card-edge: var(--ag-glass-edge) !important;
+  --glass: var(--ag-glass-tint) !important;
+  --glass-border: var(--ag-glass-edge) !important;
+  --glass-highlight: var(--ag-glass-edge-top) !important;
+  --onyx-frame: var(--ag-glass-tint) !important;
+  --onyx-well: rgb(255 255 255 / .05) !important;
+  --onyx-raised: var(--ag-glass-tint-hi) !important;
+  --onyx-selected: var(--ag-state-selected) !important;
+  --onyx-key: rgb(255 255 255 / .08) !important;
   --muted: rgb(255 255 255 / .06) !important;               --color-muted: rgb(255 255 255 / .06) !important;
   --secondary: rgb(255 255 255 / .07) !important;           --color-secondary: rgb(255 255 255 / .07) !important;
   --editor: hsl(var(--ag-tint-h) 20% 6% / .6) !important;   --color-editor: hsl(var(--ag-tint-h) 20% 6% / .6) !important;
   --primary: rgb(var(--ag-accent)) !important;              --color-primary: rgb(var(--ag-accent)) !important;
   --primary-foreground: rgb(var(--ag-accent-ink)) !important; --color-primary-foreground: rgb(var(--ag-accent-ink)) !important;
+  --cta: rgb(var(--ag-accent)) !important;
+  --cta-foreground: rgb(var(--ag-accent-ink)) !important;
   --link: rgb(var(--ag-accent)) !important;
   --focus-ring-color: rgb(var(--ag-accent) / .45) !important;
   --editor-selection-background: rgb(var(--ag-accent) / .30) !important;
@@ -68,6 +84,67 @@ html { transition: --ag-glass-a 1.2s ease, --ag-wp-bright 1.2s ease, --ag-scrim 
 .theme-standalone { background-color: transparent !important; }
 ::selection { background: rgb(var(--ag-accent) / .32); }
 input, textarea, [contenteditable="true"] { caret-color: rgb(var(--ag-accent)) !important; }
+
+/* ==================================================================
+   2.34+ Shell / Inset Sheet / Tiling Pane 透明穿透
+   —— 2.34.0 引入了 .agy-shell / .agy-inset-shell / .agy-sheet 实色外框，
+      必须在非弹窗区域全部透明，壁纸才能自然透出。
+   ================================================================== */
+body[data-agy-theme] .agy-shell,
+.agy-shell,
+body[data-agy-theme] .agy-inset-shell,
+.agy-inset-shell,
+.bg-\[var\(--shell-canvas\)\],
+body[data-agy-theme] .agy-sheet,
+.agy-sheet,
+.agy-sheet[data-sheet-inset] [data-main-content-body],
+.agy-inset-shell [data-side-panel-body],
+[data-split-panes] .agy-sheet[data-sheet-inset] [data-testid="tiling-splitter"] > [data-splitter-band],
+[data-split-panes] .agy-sheet[data-sheet-inset] [data-tiling-pane] [data-testid="pane-titlebar-toolbar"] {
+  background-color: transparent !important;
+  background-image: none !important;
+}
+/* 2.34+ 侧栏内联 style="--sidebar: var(--shell-canvas)" 会覆写变量，这里确保侧栏外框透明 */
+.agy-inset-shell [data-split-root] > div > div[style*="--shell-canvas"] {
+  --sidebar: transparent !important;
+  --color-sidebar: transparent !important;
+}
+/* 主区 / 侧面板卡片保留 0.5px 柔边，不遮挡壁纸 */
+.agy-sheet[data-sheet-inset] [data-main-content-body]::after,
+.agy-inset-shell [data-side-panel-body]::after {
+  box-shadow: inset 0 0 0 0.5px var(--ag-glass-edge) !important;
+}
+
+/* ==================================================================
+   2.34+ 内置浏览器三层挖洞兼容（WCV Three-Layer Stack）
+   —— 当内置浏览器面板打开时，body 带 data-has-browser-hole="true"，
+      此时底层浏览器 View 通过透明孔透出；暂停壁纸覆盖以免遮住内置网页。
+   ================================================================== */
+html:has(body[data-has-browser-hole="true"]),
+body[data-has-browser-hole="true"] {
+  background-color: transparent !important;
+}
+body[data-has-browser-hole="true"]::before,
+body[data-has-browser-hole="true"]::after,
+body[data-has-browser-hole="true"] > #ag-wallpaper-video,
+body[data-has-browser-hole="true"] > #ag-rain-canvas {
+  opacity: 0 !important;
+  transition: opacity .2s ease !important;
+}
+body[data-has-browser-hole="true"] .agy-inset-shell {
+  --shell-canvas: transparent !important;
+  background-color: transparent !important;
+}
+body[data-has-browser-hole="true"] .bg-\[var\(--shell-canvas\)\]:not(:has([data-browser-hole]:not([data-browser-hole="false"]))) {
+  background-color: #0b0f12 !important;
+}
+body[data-has-browser-hole="true"] :is(.agy-sheet[data-sheet-inset] [data-main-content-body], .agy-inset-shell [data-side-panel-body]):not([data-browser-hole]):not(:has([data-browser-hole]:not([data-browser-hole="false"]))) {
+  background-color: #0e1316 !important;
+}
+body[data-has-browser-hole="true"] [data-browser-hole]:not([data-browser-hole="false"]) {
+  background: transparent !important;
+  background-color: transparent !important;
+}
 
 /* ---------- 细滚动条：平时隐形，悬停出现 ---------- */
 ::-webkit-scrollbar { width: 8px !important; height: 8px !important; }
@@ -80,12 +157,16 @@ input, textarea, [contenteditable="true"] { caret-color: rgb(var(--ag-accent)) !
 /* ==================================================================
    标题栏：完全透明
    ================================================================== */
-[data-testid="title-menu-bar"] { background: transparent !important; }
+[data-testid="title-menu-bar"],
+body[data-agy-theme] .agy-sheet .agy-titlebar.bg-sidebar {
+  background: transparent !important;
+}
 
 /* ==================================================================
-   侧栏：悬浮岛
+   侧栏：悬浮岛（兼容 2.19 旧 DOM 与 2.34 新 sidebar-navigation-items 结构）
    ================================================================== */
-.bg-sidebar:has(> .px-2 [data-testid="new-conversation-button"]) {
+.bg-sidebar:has(> .px-2 [data-testid="new-conversation-button"]),
+.agy-inset-shell .bg-sidebar:has([data-testid="sidebar-navigation-items"]) {
   margin: 0 0 var(--ag-gap) var(--ag-gap) !important;
   width: calc(100% - var(--ag-gap)) !important;
   height: calc(100% - var(--ag-gap)) !important;
@@ -98,14 +179,26 @@ input, textarea, [contenteditable="true"] { caret-color: rgb(var(--ag-accent)) !
   box-shadow: var(--ag-shadow) !important;
   overflow: hidden !important;
 }
+/* 2.34+ 侧栏收起后悬停呼出（Peek 模式）需要更深的磨砂以防文字透底，并贴齐左缘防悬停断触 */
+[data-peek-surface="open"] .bg-sidebar:has([data-testid="sidebar-navigation-items"]),
+[data-peek-surface="open"].bg-sidebar:has([data-testid="sidebar-navigation-items"]) {
+  margin-left: 0 !important;
+  width: 100% !important;
+  background: var(--ag-popover) !important;
+  -webkit-backdrop-filter: blur(24px) saturate(160%) !important;
+  backdrop-filter: blur(24px) saturate(160%) !important;
+}
 /* 左上角的"收起侧栏 / 后退 / 前进"浮层跟着岛一起内移 */
-.absolute.top-0.left-0.z-50.shrink-0:has([data-testid="sidebar-toggle"]) { transform: translateX(var(--ag-gap)); }
+.absolute.top-0.left-0.z-50.shrink-0:has([data-testid="sidebar-toggle"]),
+.absolute.left-0.top-0.flex.items-center.shrink-0.z-50:has([data-testid="sidebar-toggle"]) {
+  transform: translateX(var(--ag-gap));
+}
 /* 侧栏和主区之间的 1px 硬分割线去掉，让壁纸从中间透出来 */
 .flex:has([data-testid="new-conversation-button"]) + .bg-border { background: transparent !important; }
 
 /* 条目圆角统一 */
 [data-testid="new-conversation-button"], [data-testid="history-button"], [data-testid="automations-button"],
-[data-testid="settings-button"], [data-testid="conversation-row-sidebar"], .group\/headerbtn {
+[data-testid="settings-button"], [data-testid="conversation-row-sidebar"], .agy-sidebar-row, .group\/headerbtn {
   border-radius: var(--ag-r-sm) !important;
 }
 /* 主操作"新建对话"：强调色淡染 */
@@ -117,10 +210,18 @@ input, textarea, [contenteditable="true"] { caret-color: rgb(var(--ag-accent)) !
 [data-testid="new-conversation-button"]:hover { background: var(--ag-state-primary-hover) !important; }
 [data-testid="new-conversation-button"] svg { color: rgb(var(--ag-accent)) !important; }
 /* 选中对话：白色叠加 + 左侧强调色竖条 */
-[data-testid="conversation-row-sidebar"][data-selected="true"] { background: var(--ag-state-selected) !important; }
-[data-testid="conversation-row-sidebar"][data-selected="true"] .text-secondary-foreground { color: rgb(var(--ag-fg)) !important; }
-[data-testid="conversation-row-sidebar"][data-selected="true"]::before {
-  content: ""; position: absolute; left: 14px; top: 50%; width: 3px; height: 14px; margin-top: -7px;
+[data-testid="conversation-row-sidebar"][data-selected="true"],
+.agy-sidebar-row[data-selected="true"] {
+  position: relative !important;
+  background: var(--ag-state-selected) !important;
+}
+[data-testid="conversation-row-sidebar"][data-selected="true"] .text-secondary-foreground,
+.agy-sidebar-row[data-selected="true"] .text-secondary-foreground {
+  color: rgb(var(--ag-fg)) !important;
+}
+[data-testid="conversation-row-sidebar"][data-selected="true"]::before,
+.agy-sidebar-row[data-selected="true"]::before {
+  content: ""; position: absolute; left: 10px; top: 50%; width: 3px; height: 14px; margin-top: -7px;
   border-radius: 3px; background: rgb(var(--ag-accent)); box-shadow: 0 0 10px rgb(var(--ag-accent) / .6);
   pointer-events: none;
 }
@@ -133,7 +234,9 @@ input, textarea, [contenteditable="true"] { caret-color: rgb(var(--ag-accent)) !
   background: linear-gradient(90deg, transparent, rgb(2 6 8 / var(--ag-scrim)) 18%, rgb(2 6 8 / var(--ag-scrim)) 82%, transparent)
               center / min(1040px, 100%) 100% no-repeat !important;
 }
-[data-testid="install-editor"] {
+[data-testid="install-editor"],
+[data-testid="open-editor-single"],
+[data-testid="open-editor-multi"] {
   border-radius: 999px !important;
   background: rgb(255 255 255 / .06) !important;
   border-color: rgb(255 255 255 / .09) !important;
@@ -152,8 +255,7 @@ input, textarea, [contenteditable="true"] { caret-color: rgb(var(--ag-accent)) !
 .leading-relaxed.select-text a { color: rgb(var(--ag-accent)) !important; }
 .leading-relaxed.select-text li::marker { color: rgb(var(--ag-accent) / .8); }
 
-/* ---------- 吸顶用户消息 ---------- */
-/* 外层整行容器原本用 bg-background + 渐变做遮挡，现在透明，只让气泡本身成为亚克力 */
+/* ---------- 吸顶用户消息（兼容 2.19 与 2.34 用户消息气泡） ---------- */
 .sticky.top-0 > .md-sticky-message-bleed { background: transparent !important; }
 .sticky.top-0 > .md-sticky-message-bleed::after { display: none !important; }
 .md-sticky-message-bleed [data-testid="lifted-context-menu-trigger"] {
@@ -167,11 +269,18 @@ input, textarea, [contenteditable="true"] { caret-color: rgb(var(--ag-accent)) !
   box-shadow: 0 8px 28px rgb(0 0 0 / .3) !important;
 }
 .md-sticky-message-bleed [data-testid="lifted-context-menu-trigger"] > .bg-card { background: transparent !important; }
+[data-testid="conversation-view"] .sticky.top-0.bg-background:not(:has(.md-sticky-message-bleed)) {
+  background: var(--ag-glass-tint) !important;
+  -webkit-backdrop-filter: blur(var(--ag-blur-sticky)) saturate(var(--ag-sat)) !important;
+  backdrop-filter: blur(var(--ag-blur-sticky)) saturate(var(--ag-sat)) !important;
+}
 
-/* ---------- 输入区 ---------- */
-/* 外壳不再是一整块：任务托盘和输入框拆成两块独立的亚克力 */
-[id="antigravity.agentSidePanelInputBox"] {
+/* ---------- 输入区（兼容 2.19 .bg-card 与 2.34 .surface-composer > .surface-composer-card） ---------- */
+[id="antigravity.agentSidePanelInputBox"],
+body[data-agy-theme] [id="antigravity.agentSidePanelInputBox"].surface-composer,
+body[data-agy-theme].dark [id="antigravity.agentSidePanelInputBox"].surface-composer {
   background: transparent !important;
+  background-color: transparent !important;
   -webkit-backdrop-filter: none !important;
   backdrop-filter: none !important;
   border: 0 !important;
@@ -180,15 +289,20 @@ input, textarea, [contenteditable="true"] { caret-color: rgb(var(--ag-accent)) !
   border-radius: 0 !important;
 }
 [id="antigravity.agentSidePanelInputBox"] > .bg-card,
+[id="antigravity.agentSidePanelInputBox"] > .surface-composer-card,
+body[data-agy-theme] [id="antigravity.agentSidePanelInputBox"].surface-composer > .surface-composer-card,
+body[data-agy-theme].dark [id="antigravity.agentSidePanelInputBox"].surface-composer > .surface-composer-card,
 [data-testid="running-items-panel"].grid-rows-\[1fr\] > div {
   background: var(--ag-glass-tint) !important;
+  background-color: var(--ag-glass-tint) !important;
   -webkit-backdrop-filter: blur(var(--ag-blur)) saturate(var(--ag-sat)) !important;
   backdrop-filter: blur(var(--ag-blur)) saturate(var(--ag-sat)) !important;
   border: 1px solid var(--ag-glass-edge) !important;
   border-top-color: var(--ag-glass-edge-top) !important;
   box-shadow: var(--ag-shadow) !important;
 }
-[id="antigravity.agentSidePanelInputBox"] > .bg-card {
+[id="antigravity.agentSidePanelInputBox"] > .bg-card,
+[id="antigravity.agentSidePanelInputBox"] > .surface-composer-card {
   border-radius: var(--ag-r-lg) !important;
   transition: box-shadow .3s ease, background .3s ease, border-color .3s ease !important;
 }
@@ -196,8 +310,12 @@ input, textarea, [contenteditable="true"] { caret-color: rgb(var(--ag-accent)) !
 [data-testid="running-items-panel"].grid-rows-\[1fr\] { margin-bottom: 8px; }
 [data-testid="running-items-panel"] > div { border-radius: var(--ag-r-md) !important; }
 /* 聚焦：不是蓝色描边环，而是整体提亮 + 下方一团强调色光晕 */
-[id="antigravity.agentSidePanelInputBox"]:focus-within > .bg-card {
+[id="antigravity.agentSidePanelInputBox"]:focus-within > .bg-card,
+[id="antigravity.agentSidePanelInputBox"]:focus-within > .surface-composer-card,
+body[data-agy-theme] [id="antigravity.agentSidePanelInputBox"].surface-composer:focus-within > .surface-composer-card,
+body[data-agy-theme].dark [id="antigravity.agentSidePanelInputBox"].surface-composer:focus-within > .surface-composer-card {
   background: var(--ag-glass-tint-hi) !important;
+  background-color: var(--ag-glass-tint-hi) !important;
   border-top-color: rgb(255 255 255 / .34) !important;
   box-shadow: var(--ag-shadow), 0 0 0 1px rgb(var(--ag-accent) / .28), 0 14px 60px -12px rgb(var(--ag-accent) / .42) !important;
 }
@@ -213,9 +331,11 @@ input, textarea, [contenteditable="true"] { caret-color: rgb(var(--ag-accent)) !
 }
 
 /* ==================================================================
-   浮层：下拉菜单 / 列表 / 提示 —— 背后是任意内容，需要接近实色
+   浮层：下拉菜单 / 列表 / 提示 / 快捷命令面板 —— 背后是任意内容，需要接近实色
    ================================================================== */
-[role="menu"], [role="listbox"], [role="tooltip"] {
+[role="menu"], [role="listbox"], [role="tooltip"],
+body[data-agy-theme] .agy-fastpick.surface-glass,
+body[data-agy-theme] .quick-input-widget.surface-glass {
   background: var(--ag-popover) !important;
   -webkit-backdrop-filter: blur(24px) saturate(160%) !important;
   backdrop-filter: blur(24px) saturate(160%) !important;
@@ -225,28 +345,35 @@ input, textarea, [contenteditable="true"] { caret-color: rgb(var(--ag-accent)) !
 }
 
 /* ==================================================================
-   设置面板与模态弹窗：保持实色，彻底避免透字
+   设置面板、模态弹窗与实色抽屉：保持实色，彻底避免透字
    （旧版用 [class*="backdrop"]，会误伤 Antigravity 自己的 backdrop-blur-* 元素）
    ================================================================== */
-.settings-modal-backdrop, .overlay-backdrop, [data-radix-backdrop] {
+.settings-modal-backdrop, .overlay-backdrop, [data-radix-backdrop], [data-testid="modal-backdrop"] {
   background-color: rgb(5 8 10 / .72) !important;
   -webkit-backdrop-filter: blur(12px) !important;
   backdrop-filter: blur(12px) !important;
 }
-.settings-modal-container, [class*="settings-modal-container"], [role="dialog"], [data-radix-dialog-content] {
+.settings-modal-container, [class*="settings-modal-container"],
+.agy-dialog, .surface-opaque, [role="dialog"], [data-radix-dialog-content] {
   --background: #0c1113 !important;  --color-background: #0c1113 !important;
   --sidebar: #090d0f !important;     --color-sidebar: #090d0f !important;
+  --shell: #090d0f !important;       --shell-canvas: #090d0f !important;
   --card: #141a1d !important;        --color-card: #141a1d !important;
+  --glass: #141a1d !important;
+  --onyx-frame: #101619 !important;  --onyx-raised: #141a1d !important;
   --muted: #1d2427 !important;       --color-muted: #1d2427 !important;
   --secondary: #1a2124 !important;   --color-secondary: #1a2124 !important;
   background-color: #0c1113 !important;
+}
+.settings-modal-container, [class*="settings-modal-container"],
+.agy-dialog, [role="dialog"], [data-radix-dialog-content] {
   border: 1px solid rgb(255 255 255 / .12) !important;
   border-radius: var(--ag-r-lg) !important;
   box-shadow: 0 25px 60px rgb(0 0 0 / .8) !important;
 }
-[role="dialog"] .bg-background, .settings-modal-container .bg-background { background-color: #0c1113 !important; }
-[role="dialog"] .bg-sidebar, .settings-modal-container .bg-sidebar { background-color: #090d0f !important; }
-[role="dialog"] .bg-card, .settings-modal-container .bg-card { background-color: #141a1d !important; }
+:is([role="dialog"], .settings-modal-container, .agy-dialog, [data-radix-dialog-content], .surface-opaque) .bg-background { background-color: #0c1113 !important; }
+:is([role="dialog"], .settings-modal-container, .agy-dialog, [data-radix-dialog-content], .surface-opaque) .bg-sidebar { background-color: #090d0f !important; }
+:is([role="dialog"], .settings-modal-container, .agy-dialog, [data-radix-dialog-content], .surface-opaque) .bg-card { background-color: #141a1d !important; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition: none !important; }
