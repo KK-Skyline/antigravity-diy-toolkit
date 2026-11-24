@@ -70,11 +70,33 @@
   git clone https://github.com/KK-Skyline/antigravity-diy-toolkit.git
   ```
 
-### 2. 启动壁纸选择库 (Wallpaper Hub)
-1. Windows 双击运行 **`双击打开-壁纸选择库.bat`**；
-2. 浏览器将自动打开 `http://localhost:3210`；
-3. 浏览你订阅的所有 Wallpaper Engine 壁纸，点击任意卡片展开右侧抽屉；
-4. 选择壁纸并调节视觉参数，按界面提示应用；首次使用前配置为禁用状态，不预选其他用户的创意工坊作品。
+### 2. 启动壁纸选择库网页 (Wallpaper Hub)
+
+> **前置条件**：
+> 1. 已在项目根目录执行过一次 `npm ci --omit=dev`；
+> 2. **首次安装或 Antigravity 刚升级新版本后**，先退出 Antigravity 并在项目根目录执行一次带基线确认的命令行安装（Wallpaper Hub 不会自动建立新版本基线）：
+>    ```powershell
+>    node localization_engine.js --wallpaper --confirm-unverified-baseline
+>    ```
+>    （只要壁纸换肤、不要汉化可附加 `--only-skin`）。
+
+**启动网页（两种方式任选其一）**：
+- **方式 A：Windows 双击启动（推荐）**
+  - 在仓库目录直接双击 **`双击打开-壁纸选择库.bat`**，脚本会自动启动本地服务并在默认浏览器打开 `http://localhost:3210`。
+- **方式 B：命令行启动（Windows / 通用）**
+  - 在仓库根目录打开终端执行：
+    ```powershell
+    node wallpaper_hub_server.js
+    ```
+  - 看到服务监听 `3210` 端口后，手动在浏览器打开 **`http://localhost:3210`**（或 `http://127.0.0.1:3210`）。
+
+**选壁纸与应用步骤**：
+1. 在网页中浏览/搜索你本地 Steam 订阅的所有 Wallpaper Engine 壁纸，点击任意卡片展开右侧调参抽屉；
+2. 调节透明度、毛玻璃模糊、亮度、对比度、饱和度等参数，点击 **「应用」**（勾选自动重启可一键重启客户端生效，极速 ASAR 引擎约 2 秒完成写入）；
+3. **常见排查**：
+   - **刚点开浏览器提示无法连接**：`.bat` 拉起浏览器早于 Node 启动约半秒，等待 1 秒按 **F5** 刷新即可；
+   - **提示端口 `3210` 已被占用**：说明之前已经开过一个 Wallpaper Hub 窗口，直接访问 `http://localhost:3210` 或先关闭旧的黑色终端窗口；
+   - **使用完毕**：直接关闭黑色终端窗口（或在终端按 `Ctrl+C`）即可退出本地服务；首次使用前默认配置为禁用状态，不预选其他用户的创意工坊作品。
 
 ### 3. 一键安装中文汉化
 1. 退出 Antigravity 客户端；

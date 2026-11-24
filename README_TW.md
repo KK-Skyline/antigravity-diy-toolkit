@@ -89,6 +89,32 @@ node localization_engine.js --tw --brand-title translated
 
 ---
 
+### 2.5 啟動桌布選擇庫網頁 (Wallpaper Hub)
+
+> **前置條件**：
+> 1. 已在專案根目錄執行過 `npm ci --omit=dev`；
+> 2. **首次安裝或 Antigravity 升級新版本後**，請先完全退出 Antigravity 並執行一次帶基線確認的命令列安裝（Wallpaper Hub 不會自動建立新版本基線）：
+>    ```powershell
+>    node localization_engine.js --tw --wallpaper --confirm-unverified-baseline
+>    ```
+>    （若只需要桌布換膚、不需要中文化，可改加 `--only-skin`）。
+
+**啟動網頁（兩種方式任選其一）**：
+- **方式 A：Windows 雙擊啟動（推薦）**
+  - 在倉庫資料夾直接雙擊 **`双击打开-壁纸选择库.bat`**，將自動啟動本機服務並以預設瀏覽器開啟 `http://localhost:3210`。
+- **方式 B：命令列啟動（Windows / 通用）**
+  - 在專案根目錄開啟終端機執行：
+    ```powershell
+    node wallpaper_hub_server.js
+    ```
+  - 服務就緒後，手動於瀏覽器開啟 **`http://localhost:3210`**（或 `http://127.0.0.1:3210`）。
+
+**操作與常見排查**：
+- 點擊任意已訂閱的 Wallpaper Engine 桌布卡片可展開右側抽屜微調透明度、模糊與亮度並一鍵套用（使用完畢關閉終端視窗或按 `Ctrl+C` 即可結束服務）；
+- 若雙擊 `.bat` 後瀏覽器開啟過快顯示無法連線，等待 1 秒按 **F5** 重新整理即可；若提示連接埠 `3210` 已被佔用，表示已有開啟中的 Wallpaper Hub 視窗，直接開啟 `http://localhost:3210` 或關閉舊視窗即可。
+
+---
+
 ### 3. 一鍵卸載還原
 1. **完全退出** Antigravity 編程軟體。
 2. 已確認的基線可在當前資料夾下執行：
