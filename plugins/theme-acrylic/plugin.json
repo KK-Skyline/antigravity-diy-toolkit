@@ -1,0 +1,10 @@
+{
+  "id": "theme-acrylic",
+  "name": "Weightless Acrylic Theme",
+  "version": "1.0.0",
+  "layerOrder": 20,
+  "defaultEnabled": false,
+  "requires": [],
+  "conflictsWith": [],
+  "settingsSchema": {}
+}
