@@ -190,3 +190,12 @@ node localization_engine.js --tw --brand-title translated
 - 本倉庫未包含 Google Antigravity 或 Wallpaper Engine 的安裝檔案。問題回報請使用本倉庫的 [Issues](https://github.com/KK-Skyline/antigravity-diy-toolkit/issues)。
 - 感謝所有參與測試與回饋的貢獻者！
 - 舊版曾參考 [yuaotian/antigravity-proxy](https://github.com/yuaotian/antigravity-proxy)；目前自動注入功能已停用。
+
+---
+
+## 🧩 外掛化架構與純換膚模式
+
+本專案已將繁簡中文化、DevTools、黑曜石藍、Wallpaper Engine、失重壓克力主題及雨滴特效拆分為 `plugins/*` 下的獨立外掛，由 `core/plugin_loader.js` 與 `core/injector.js` 統一編排：
+- **純換膚（不裝漢化）**：`node localization_engine.js --wallpaper --no-i18n`（或 `--only-skin`），僅注入桌布與主題，不注入中文翻譯；
+- **按外掛開關**：支援 `--enable <id,...>` / `--disable <id,...>`（可用外掛：`i18n-zh`、`devtools`、`theme-obsidian-blue`、`wallpaper-engine`、`theme-acrylic`、`fx-rain`）；
+- **自訂設定**：可複製 `plugins.config.example.json` 為 `plugins.config.json`（已被 `.gitignore` 忽略）。

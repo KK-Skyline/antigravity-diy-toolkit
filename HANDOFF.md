@@ -4,6 +4,10 @@
 > 目的：让下一个会话（或下一个 AI / 你自己）不用翻旧对话，就能接着干。
 > 只写**最终确认正确**的结论；调试过程中被推翻的判断一律不写。
 
+### 🆕 2026-11-24 插件化重构（`feat/plugin-architecture`）
+- **内核与插件拆分**：`core/host_env.js`、`core/plugin_loader.js`、`core/injector.js` 负责环境探测、安全校验/依赖解析与私有 `__agBus` 隔离注入；功能拆分为 `plugins/i18n-zh`、`plugins/devtools`、`plugins/theme-obsidian-blue`、`plugins/wallpaper-engine`、`plugins/theme-acrylic`、`plugins/fx-rain`。
+- **纯换肤支持**：新增 `--no-i18n` / `--only-skin` 与 `--enable` / `--disable`，支持不装汉化只换肤；所有旧 CLI 参数与 4 套 CI 测试保持 100% 兼容，新增 `tools/plugin_architecture_regression.mjs`。
+
 ### 🆕 2026-11-24 Antigravity 2.34.0 适配要点（`fix/adapt-antigravity-2.34`）
 - **Shell / Sheet 透明穿透**：2.34.0 引入 `body[data-agy-theme]`、`.agy-shell`、`.agy-inset-shell`（`--shell-canvas: var(--shell)`）、`.agy-sheet[data-sheet-inset]`（`[data-main-content-body]` / `[data-side-panel-body]`）与 `.surface-composer > .surface-composer-card`（显式关闭 `backdrop-filter`）。已在 [`theme-acrylic.css`](theme-acrylic.css) 与 `--dark-blue` 中完整覆写，并在内置浏览器挖洞（`body[data-has-browser-hole="true"]`）激活时自动淡出底层壁纸，避免遮挡三层 WCV 浏览器画面。
 - **主进程注入修复**：
