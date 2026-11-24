@@ -226,9 +226,16 @@ async function install20(resourcesDir, transaction, confirmUnverified, configPla
         return false;
     }
     const baseline = transaction.prepareBaseline(resourcesDir, { confirmUnverified, txCtx });
+    const useFastAsar = process.env.AG_DISABLE_FAST_ASAR !== '1' &&
+        typeof transaction.extractSubtree === 'function' &&
+        typeof transaction.patchAndReplace === 'function';
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'antigravity-asar-'));
     try {
-        transaction.extractBaseline(baseline, tempDir);
+        if (useFastAsar) {
+            transaction.extractSubtree(baseline, tempDir, ['dist']);
+        } else {
+            transaction.extractBaseline(baseline, tempDir);
+        }
 
     // 3. 注入 preload.js
     const preloadPath = path.join(tempDir, "dist", "preload.js");
@@ -266,7 +273,11 @@ async function install20(resourcesDir, transaction, confirmUnverified, configPla
 
     // 4. 重新打包
     console.log(`[打包] 正在将修改后的内容打包回 app.asar...`);
-    await transaction.packAndReplace(resourcesDir, tempDir, baseline, configPlan, txCtx);
+    if (useFastAsar) {
+        await transaction.patchAndReplace(resourcesDir, tempDir, baseline, configPlan, txCtx);
+    } else {
+        await transaction.packAndReplace(resourcesDir, tempDir, baseline, configPlan, txCtx);
+    }
 
     cleanElectronCache();
     resignAppOnMac(resourcesDir);

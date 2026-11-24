@@ -4,6 +4,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import * as asar from '@electron/asar';
 import { escape as escapeGlob } from 'minimatch';
+import { extractSubtree as fastExtractSubtree, buildPatchedAsar } from './core/asar_fast_patch.mjs';
 const literalGlob = name => escapeGlob(name).replaceAll(',', '\\,');
 
 const SIGNATURE = '/* --- ANTIGRAVITY CHINESE LOCALIZATION START --- */';
@@ -724,30 +725,52 @@ function replace(dir, next, keepRollback = false, { alreadyInspectedNext = false
 
 export function extractBaseline(file, dest) { asar.extractAll(file, dest); }
 
-export function asarUnpackGlob(dirs) {
-    const patterns = [...new Set(dirs)].map(literalGlob);
-    return patterns.length === 1 ? patterns[0] : patterns.length ? `{${patterns.join(',')}}` : undefined;
+export function extractSubtree(file, dest, subdirs = ['dist']) {
+    return fastExtractSubtree(file, dest, subdirs);
 }
 
-function asarUnpackFilesGlob(files, extracted) {
-    const patterns = files.map(name => literalGlob(path.join(extracted, name).replaceAll('\\', '/')));
-    return patterns.length === 1 ? patterns[0] : patterns.length ? `{${patterns.join(',')}}` : undefined;
+function collectPatchMap(patchRootDir, subdirs = ['dist']) {
+    const rootReal = fs.realpathSync(patchRootDir);
+    const patchMap = new Map();
+    for (const sub of subdirs) {
+        const subDir = path.join(patchRootDir, sub);
+        if (!fs.existsSync(subDir)) continue;
+        const st = fs.lstatSync(subDir);
+        if (st.isSymbolicLink() || !st.isDirectory()) {
+            throw new Error(`Unsafe patch directory: ${subDir}`);
+        }
+        const subReal = fs.realpathSync(subDir);
+        if (!subReal.startsWith(rootReal + path.sep)) {
+            throw new Error(`Patch directory escapes root: ${subDir}`);
+        }
+        const walk = (absDir, relPosix) => {
+            for (const entry of fs.readdirSync(absDir, { withFileTypes: true })) {
+                const absEntry = path.join(absDir, entry.name);
+                const nextRel = `${relPosix}/${entry.name}`;
+                if (entry.isSymbolicLink()) {
+                    throw new Error(`Symlink not allowed in patch directory: ${nextRel}`);
+                }
+                const entryReal = fs.realpathSync(absEntry);
+                if (!entryReal.startsWith(subReal + path.sep)) {
+                    throw new Error(`Patch entry escapes directory: ${nextRel}`);
+                }
+                if (entry.isDirectory()) {
+                    walk(absEntry, nextRel);
+                } else if (entry.isFile()) {
+                    patchMap.set(nextRel, fs.readFileSync(absEntry));
+                }
+            }
+        };
+        walk(subDir, sub);
+    }
+    return patchMap;
 }
 
-export async function packAndReplace(dir, extracted, baseline, config = null, txCtx = null) {
-    preflightBaselineConsent(dir, { txCtx });
-    const { info: original } = inspectBaselineWithCtx(baseline, txCtx);
-    const next = path.join(dir, `app.asar.new-${unique()}`);
+function commitStagedAsar(dir, next, config, original, inspectSidecar, txCtx) {
     let configStage = null;
     const configFile = config ? path.resolve(config.file) : null;
     try {
-        const leafFiles = original.unpacked.filter(name =>
-            !original.unpackedDirs.some(dirName => name.startsWith(`${dirName}/`)));
-        await asar.createPackageWithOptions(extracted, next, {
-            unpackDir: asarUnpackGlob(original.unpackedDirs),
-            unpack: asarUnpackFilesGlob(leafFiles, extracted)
-        });
-        const packed = inspectArchive(next);
+        const packed = inspectSidecar ? inspectArchive(next, inspectSidecar) : inspectArchive(next);
         if (packed.version !== original.version || !packed.localized ||
             packed.unpacked.join('\0') !== original.unpacked.join('\0') ||
             packed.unpackedDirs.join('\0') !== original.unpackedDirs.join('\0') ||
@@ -796,6 +819,49 @@ export async function packAndReplace(dir, extracted, baseline, config = null, tx
         if (fs.existsSync(`${next}.unpacked`)) fs.rmSync(`${next}.unpacked`, { recursive: true });
         if (configStage && fs.existsSync(configStage)) fs.unlinkSync(configStage);
     }
+}
+
+export function asarUnpackGlob(dirs) {
+    const patterns = [...new Set(dirs)].map(literalGlob);
+    return patterns.length === 1 ? patterns[0] : patterns.length ? `{${patterns.join(',')}}` : undefined;
+}
+
+function asarUnpackFilesGlob(files, extracted) {
+    const patterns = files.map(name => literalGlob(path.join(extracted, name).replaceAll('\\', '/')));
+    return patterns.length === 1 ? patterns[0] : patterns.length ? `{${patterns.join(',')}}` : undefined;
+}
+
+export async function packAndReplace(dir, extracted, baseline, config = null, txCtx = null) {
+    preflightBaselineConsent(dir, { txCtx });
+    const { info: original } = inspectBaselineWithCtx(baseline, txCtx);
+    const next = path.join(dir, `app.asar.new-${unique()}`);
+    const leafFiles = original.unpacked.filter(name =>
+        !original.unpackedDirs.some(dirName => name.startsWith(`${dirName}/`)));
+    try {
+        await asar.createPackageWithOptions(extracted, next, {
+            unpackDir: asarUnpackGlob(original.unpackedDirs),
+            unpack: asarUnpackFilesGlob(leafFiles, extracted)
+        });
+    } catch (error) {
+        if (fs.existsSync(next)) fs.unlinkSync(next);
+        if (fs.existsSync(`${next}.unpacked`)) fs.rmSync(`${next}.unpacked`, { recursive: true });
+        throw error;
+    }
+    commitStagedAsar(dir, next, config, original, null, txCtx);
+}
+
+export async function patchAndReplace(dir, patchRootDir, baseline, config = null, txCtx = null) {
+    preflightBaselineConsent(dir, { txCtx });
+    const { info: original } = inspectBaselineWithCtx(baseline, txCtx);
+    const next = path.join(dir, `app.asar.new-${unique()}`);
+    try {
+        const patchMap = collectPatchMap(patchRootDir, ['dist']);
+        buildPatchedAsar(baseline, patchMap, next);
+    } catch (error) {
+        if (fs.existsSync(next)) fs.unlinkSync(next);
+        throw error;
+    }
+    commitStagedAsar(dir, next, config, original, `${livePath(dir)}.unpacked`, txCtx);
 }
 
 export function restore(dir, { confirmUnverified = false } = {}) {
