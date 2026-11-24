@@ -38,6 +38,12 @@ function getOptionValue(name, defaultValue) {
     return defaultValue;
 }
 
+function hasOption(name) {
+    const args = process.argv.slice(2);
+    return args.some(a => a === name || a.startsWith(name + '='));
+}
+
+const HAS_BRAND_TITLE = hasOption('--brand-title');
 const BRAND_TITLE_MODE = BRAND_TITLE_ALIASES[String(getOptionValue('--brand-title', 'english')).toLowerCase()] || 'english';
 
 if (USE_TW) {
@@ -139,21 +145,11 @@ const CLI_ENABLE_PLUGINS = parseIdListOption('--enable');
 const CLI_DISABLE_PLUGINS = parseIdListOption('--disable');
 
 function getActivePlugins() {
-    const enable = ['devtools'];
+    const enable = [];
     const disable = [];
-    if (NO_I18N) {
-        disable.push('i18n-zh');
-    } else {
-        enable.push('i18n-zh');
-    }
+    if (NO_I18N) disable.push('i18n-zh');
     if (USE_DARK_BLUE) enable.push('theme-obsidian-blue');
-    else disable.push('theme-obsidian-blue');
-
-    if (USE_WALLPAPER) {
-        enable.push('wallpaper-engine', 'theme-acrylic', 'fx-rain');
-    } else {
-        disable.push('wallpaper-engine', 'theme-acrylic', 'fx-rain');
-    }
+    if (USE_WALLPAPER) enable.push('wallpaper-engine', 'theme-acrylic', 'fx-rain');
 
     for (const id of CLI_ENABLE_PLUGINS) {
         const idx = disable.indexOf(id);
@@ -166,15 +162,18 @@ function getActivePlugins() {
         if (!disable.includes(id)) disable.push(id);
     }
 
+    const settings = {};
+    const i18nSettings = {};
+    if (USE_TW) i18nSettings.locale = 'zh-TW';
+    if (HAS_BRAND_TITLE) i18nSettings.brandTitle = BRAND_TITLE_MODE;
+    if (Object.keys(i18nSettings).length > 0) {
+        settings['i18n-zh'] = i18nSettings;
+    }
+
     return pluginLoader.resolvePlugins(__dirname, {
         enable,
         disable,
-        settings: {
-            'i18n-zh': {
-                locale: USE_TW ? 'zh-TW' : 'zh-CN',
-                brandTitle: BRAND_TITLE_MODE
-            }
-        }
+        settings
     });
 }
 
@@ -238,20 +237,8 @@ async function install20(resourcesDir, transaction, confirmUnverified, configPla
         return false;
     }
 
-    console.log(`[修改] 正在向 preload.js 注入汉化代码...`);
-    let content = fs.readFileSync(preloadPath, 'utf-8');
-
-    // 清理已有的汉化，重新注入
-    const cleanedContent = cleanJsContent(content);
-    const translationJs = generateJs(configPlan?.value);
-    const newContent = cleanedContent + "\n" + translationJs;
-
-    fs.writeFileSync(preloadPath, newContent, 'utf-8');
-    console.log(`[修改] 注入成功！`);
-
-    // 3.0-3.5 主进程补丁（由 plugins/wallpaper-engine、plugins/i18n-zh、plugins/devtools 统一处理）
     const { active, allConfigs } = getActivePlugins();
-    const mainCtx = injector.buildContextBase({
+    const ctx = injector.buildContextBase({
         rootDir: __dirname,
         tempDir,
         distDir: path.join(tempDir, 'dist'),
@@ -261,7 +248,21 @@ async function install20(resourcesDir, transaction, confirmUnverified, configPla
         shared: { configOverride: configPlan?.value || null },
         hostHelpers
     });
-    injector.runPatchMain(active, mainCtx);
+    injector.runPrepare(active, ctx);
+
+    console.log(`[修改] 正在向 preload.js 注入汉化代码...`);
+    let content = fs.readFileSync(preloadPath, 'utf-8');
+
+    // 清理已有的汉化，重新注入
+    const cleanedContent = cleanJsContent(content);
+    const translationJs = injector.buildPreloadPayload(active, ctx);
+    const newContent = cleanedContent + "\n" + translationJs;
+
+    fs.writeFileSync(preloadPath, newContent, 'utf-8');
+    console.log(`[修改] 注入成功！`);
+
+    // 3.0-3.5 主进程补丁（由 plugins/wallpaper-engine、plugins/i18n-zh、plugins/devtools 统一处理）
+    injector.runPatchMain(active, ctx);
 
     // 4. 重新打包
     console.log(`[打包] 正在将修改后的内容打包回 app.asar...`);

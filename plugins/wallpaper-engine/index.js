@@ -107,6 +107,52 @@ function detectSceneEffects(dir) {
     return effects;
 }
 
+function buildWallpaperBaseCss(wp) {
+    const cfg = (wp && wp.config) || {};
+    const blurVal = cfg.blur ? cfg.blur + 'px' : '0px';
+    const contVal = typeof cfg.contrast === 'number' ? cfg.contrast : 105;
+    const satVal = typeof cfg.saturate === 'number' ? cfg.saturate : 110;
+    const artFilter = 'brightness(var(--ag-wp-bright, .91)) contrast(' + contVal + '%) saturate(' + satVal + '%) blur(' + blurVal + ')';
+    return [
+        'html, body {',
+        '  background-color: #05080a !important;',
+        '  overflow: hidden !important;',
+        '  width: 100% !important;',
+        '  height: 100% !important;',
+        '  margin: 0 !important;',
+        '  padding: 0 !important;',
+        '}',
+        'body::before {',
+        '  content: "" !important;',
+        '  position: fixed !important;',
+        '  inset: -10px !important;',
+        '  z-index: 0 !important;',
+        '  pointer-events: none !important;',
+        wp && wp.dataUrl ? '  background: url("' + wp.dataUrl + '") center / cover no-repeat !important;' : '  background: none !important;',
+        '  filter: ' + artFilter + ' !important;',
+        '}',
+        'body::after {',
+        '  content: "" !important;',
+        '  position: fixed !important;',
+        '  inset: 0 !important;',
+        '  z-index: 0 !important;',
+        '  pointer-events: none !important;',
+        '  background:',
+        '    linear-gradient(180deg, rgb(0 0 0 / calc(var(--ag-scrim, .34) * .94)) 0, rgb(0 0 0 / calc(var(--ag-scrim, .34) * .41)) 60px, transparent 140px),',
+        '    linear-gradient(0deg, rgb(0 0 0 / calc(var(--ag-scrim, .34) * 1.24)) 0, transparent 240px),',
+        '    linear-gradient(90deg, rgb(0 0 0 / calc(var(--ag-scrim, .34) * .88)) 0, transparent 380px) !important;',
+        '}',
+        '#root {',
+        '  position: relative !important;',
+        '  z-index: 1 !important;',
+        '  width: 100% !important;',
+        '  height: 100% !important;',
+        '  overflow: hidden !important;',
+        '  background-color: transparent !important;',
+        '}'
+    ].join('\n');
+}
+
 module.exports = {
     prepare(ctx) {
         if (ctx.shared && ctx.shared.bakedWallpaper !== undefined) return;
@@ -197,6 +243,18 @@ module.exports = {
         } else {
             console.warn(`[警告] 未找到 dist/main.js，视频壁纸将只显示静态封面。`);
         }
+    },
+
+    getStyles(ctx) {
+        const bakedWallpaper = ctx.shared && ctx.shared.bakedWallpaper;
+        if (!bakedWallpaper || !(bakedWallpaper.dataUrl || bakedWallpaper.videoPath)) {
+            return null;
+        }
+        return {
+            id: 'antigravity-we-style',
+            layerOrder: 15,
+            css: buildWallpaperBaseCss(bakedWallpaper)
+        };
     },
 
     getPreloadRuntime(ctx) {
@@ -308,9 +366,7 @@ module.exports = {
             videoSource.path = wp.videoPath;
             videoSource.mime = wp.videoMime || 'video/mp4';
             const manual = getManualAccent(wp);
-            if (manual) {
-                bus.emit('wallpaper:frame', { bins: null, lum: null, manualAccent: manual, config: wp.config || {}, isVideoSample: true, reset: true });
-            }
+            bus.emit('wallpaper:frame', { bins: null, lum: null, manualAccent: manual, config: wp.config || {}, isVideoSample: true, reset: true });
             startVideoServer().then(url => {
                 if (!videoEl) return;
                 videoEl.src = url + '?v=' + Date.now();
@@ -319,11 +375,17 @@ module.exports = {
         }
     }
 
+    let lastAppliedWp = null;
     function applyWallpaper(wp) {
         try {
             if (!wp || !(wp.dataUrl || wp.videoPath)) return;
             const cfg = wp.config || {};
             if (cfg.enabled === false) return;
+
+            if (wp !== lastAppliedWp) {
+                lastAppliedWp = wp;
+                bus.emit('wallpaper:frame', { reset: true });
+            }
 
             const blurVal = cfg.blur ? cfg.blur + 'px' : '0px';
             const contVal = typeof cfg.contrast === 'number' ? cfg.contrast : 105;
@@ -335,7 +397,14 @@ module.exports = {
                 styleEl = document.createElement('style');
                 styleEl.id = 'antigravity-we-style';
                 const head = document.head || document.documentElement;
-                if (head) head.appendChild(styleEl);
+                if (head) {
+                    const acrylicEl = document.getElementById('antigravity-acrylic-theme');
+                    if (acrylicEl && acrylicEl.parentNode === head) {
+                        head.insertBefore(styleEl, acrylicEl);
+                    } else {
+                        head.appendChild(styleEl);
+                    }
+                }
             }
 
             styleEl.textContent = [

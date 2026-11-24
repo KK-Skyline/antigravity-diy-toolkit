@@ -4,9 +4,10 @@ import os from 'node:os';
 import path from 'node:path';
 import vm from 'node:vm';
 import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 
 const require = createRequire(import.meta.url);
-const rootDir = path.resolve(path.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..');
+const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const pluginLoader = require(path.join(rootDir, 'core', 'plugin_loader.js'));
 const injector = require(path.join(rootDir, 'core', 'injector.js'));
 
@@ -162,6 +163,175 @@ function runTests() {
             } finally {
                 fs.rmSync(symRoot, { recursive: true, force: true });
             }
+        } finally {
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
+    }
+
+    // 6. plugins.config.json takes effect without CLI overrides, and explicit CLI args override it
+    {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-plugin-cfg-'));
+        try {
+            fs.cpSync(path.join(rootDir, 'plugins'), path.join(tmp, 'plugins'), { recursive: true });
+            fs.writeFileSync(path.join(tmp, 'plugins.config.json'), JSON.stringify({
+                enabled: {
+                    'i18n-zh': true,
+                    'devtools': false,
+                    'theme-obsidian-blue': true
+                },
+                settings: {
+                    'i18n-zh': { locale: 'zh-TW', brandTitle: 'hidden' }
+                }
+            }));
+            const fromFile = pluginLoader.resolvePlugins(tmp, {});
+            const idsFromFile = fromFile.active.map(p => p.manifest.id);
+            assert.ok(idsFromFile.includes('theme-obsidian-blue'));
+            assert.ok(!idsFromFile.includes('devtools'));
+            assert.equal(fromFile.allConfigs['i18n-zh'].locale, 'zh-TW');
+            assert.equal(fromFile.allConfigs['i18n-zh'].brandTitle, 'hidden');
+
+            const overridden = pluginLoader.resolvePlugins(tmp, {
+                enable: ['devtools'],
+                disable: ['i18n-zh'],
+                settings: { 'i18n-zh': { locale: 'zh-CN' } }
+            });
+            const idsOverridden = overridden.active.map(p => p.manifest.id);
+            assert.ok(idsOverridden.includes('devtools'));
+            assert.ok(!idsOverridden.includes('i18n-zh'));
+        } finally {
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
+    }
+
+    // 7. Unknown --enable / --disable IDs, missing requires, and conflictsWith throw explicit errors
+    {
+        assert.throws(() => pluginLoader.resolvePlugins(rootDir, { enable: ['nonexistent-plugin'] }), /Unknown plugin "nonexistent-plugin" in --enable/);
+        assert.throws(() => pluginLoader.resolvePlugins(rootDir, { disable: ['nonexistent-plugin'] }), /Unknown plugin "nonexistent-plugin" in --disable/);
+
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-plugin-dep-'));
+        try {
+            const pA = path.join(tmp, 'plugins', 'plugin-a');
+            const pB = path.join(tmp, 'plugins', 'plugin-b');
+            fs.mkdirSync(pA, { recursive: true });
+            fs.mkdirSync(pB, { recursive: true });
+            fs.writeFileSync(path.join(pA, 'plugin.json'), JSON.stringify({
+                id: 'plugin-a',
+                defaultEnabled: true,
+                requires: ['plugin-b']
+            }));
+            fs.writeFileSync(path.join(pA, 'index.js'), 'module.exports = {};');
+            fs.writeFileSync(path.join(pB, 'plugin.json'), JSON.stringify({
+                id: 'plugin-b',
+                defaultEnabled: false
+            }));
+            fs.writeFileSync(path.join(pB, 'index.js'), 'module.exports = {};');
+
+            assert.throws(() => pluginLoader.resolvePlugins(tmp, {}), /requires "plugin-b"/);
+
+            fs.writeFileSync(path.join(pA, 'plugin.json'), JSON.stringify({
+                id: 'plugin-a',
+                defaultEnabled: true,
+                conflictsWith: ['plugin-b']
+            }));
+            assert.throws(() => pluginLoader.resolvePlugins(tmp, { enable: ['plugin-b'] }), /conflicts with "plugin-b"/);
+        } finally {
+            fs.rmSync(tmp, { recursive: true, force: true });
+        }
+    }
+
+    // 8. --dark-blue --wallpaper style order: dark-blue (10) < we-style (15) < acrylic (20), and check-wallpaper.js
+    {
+        const resolved = pluginLoader.resolvePlugins(rootDir, {
+            enable: ['theme-obsidian-blue', 'wallpaper-engine', 'theme-acrylic'],
+            disable: ['i18n-zh', 'devtools', 'fx-rain']
+        });
+        const ctx = injector.buildContextBase({
+            rootDir,
+            isV2: false,
+            allConfigs: resolved.allConfigs,
+            shared: {
+                bakedWallpaper: {
+                    title: 'Test',
+                    type: 'image',
+                    dataUrl: 'data:image/png;base64,AAAA',
+                    videoPath: '',
+                    effects: {},
+                    config: { blur: 0, contrast: 105, saturate: 110 }
+                }
+            },
+            hostHelpers: {}
+        });
+        const payload = injector.buildPreloadPayload(resolved.active, ctx);
+        const idxBlue = payload.indexOf('antigravity-dark-blue-theme');
+        const idxWe = payload.indexOf('antigravity-we-style');
+        const idxAcrylic = payload.indexOf('antigravity-acrylic-theme');
+        assert.ok(idxBlue !== -1 && idxWe !== -1 && idxAcrylic !== -1, 'all 3 theme styles must be present');
+        assert.ok(idxBlue < idxWe && idxWe < idxAcrylic, 'style order must be dark-blue < we-style < acrylic');
+
+        const checkWp = fs.readFileSync(path.join(rootDir, 'tools', 'check-wallpaper.js'), 'utf8');
+        assert.ok(checkWp.includes("getElementById('antigravity-acrylic-theme')"), 'check-wallpaper.js must inspect #antigravity-acrylic-theme');
+    }
+
+    // 9. wallpaper-engine emits reset: true without manualAccent; fx-rain always mode has reload hooks
+    {
+        const wpPlugin = require(path.join(rootDir, 'plugins', 'wallpaper-engine', 'index.js'));
+        const wpRuntime = wpPlugin.getPreloadRuntime({
+            shared: {
+                bakedWallpaper: {
+                    title: 'NoManual',
+                    type: 'image',
+                    dataUrl: 'data:image/png;base64,AAAA',
+                    videoPath: '',
+                    effects: {},
+                    config: {}
+                }
+            }
+        });
+        assert.ok(wpRuntime.includes("bus.emit('wallpaper:frame', { reset: true })"), 'applyWallpaper must emit reset: true');
+
+        const rainPlugin = require(path.join(rootDir, 'plugins', 'fx-rain', 'index.js'));
+        const rainRuntime = rainPlugin.getPreloadRuntime({ pluginConfig: { mode: 'always', intensity: 0.6 } });
+        assert.ok(rainRuntime.includes('ensureAlwaysRain'), 'always mode must define ensureAlwaysRain');
+        assert.ok(rainRuntime.includes('DOMContentLoaded') && rainRuntime.includes("addEventListener('load'"), 'always mode must attach reload listeners');
+    }
+
+    // 10. --no-i18n skips menu.js/tray.js/updater.js in runPatchMain, and install20 shares ctx.shared
+    {
+        const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ag-plugin-noi18n-'));
+        try {
+            const distDir = path.join(tmp, 'dist');
+            fs.mkdirSync(distDir, { recursive: true });
+            const menuOrig = 'electron_1.Menu.setApplicationMenu(menu);';
+            const trayOrig = 'function createTray(actions) { tray.setContextMenu(contextMenu); }';
+            const updaterOrig = "title: 'Check for Updates',\n                message: 'No updates available',\n                buttons: ['OK'],";
+            fs.writeFileSync(path.join(distDir, 'menu.js'), menuOrig);
+            fs.writeFileSync(path.join(distDir, 'tray.js'), trayOrig);
+            fs.writeFileSync(path.join(distDir, 'updater.js'), updaterOrig);
+
+            const resolved = pluginLoader.resolvePlugins(rootDir, {
+                enable: ['devtools'],
+                disable: ['i18n-zh', 'theme-obsidian-blue', 'wallpaper-engine', 'theme-acrylic', 'fx-rain']
+            });
+            const ctx = injector.buildContextBase({
+                rootDir,
+                tempDir: tmp,
+                distDir,
+                isV2: true,
+                allConfigs: resolved.allConfigs,
+                shared: {},
+                hostHelpers: {}
+            });
+            injector.runPrepare(resolved.active, ctx);
+            injector.runPatchMain(resolved.active, ctx);
+            assert.equal(fs.readFileSync(path.join(distDir, 'menu.js'), 'utf8'), menuOrig);
+            assert.equal(fs.readFileSync(path.join(distDir, 'tray.js'), 'utf8'), trayOrig);
+            assert.equal(fs.readFileSync(path.join(distDir, 'updater.js'), 'utf8'), updaterOrig);
+
+            const engineSrc = fs.readFileSync(path.join(rootDir, 'localization_engine.js'), 'utf8');
+            assert.ok(engineSrc.includes('injector.runPrepare(active, ctx)') &&
+                engineSrc.includes('injector.buildPreloadPayload(active, ctx)') &&
+                engineSrc.includes('injector.runPatchMain(active, ctx)'),
+                'install20 must reuse the same ctx across prepare, preload, and patchMain');
         } finally {
             fs.rmSync(tmp, { recursive: true, force: true });
         }

@@ -158,13 +158,20 @@ function resolvePlugins(rootDir, cliSelection = {}) {
         if (fileEnabled) enabledSet.add(m.id);
     }
 
+    const availableIds = manifests.map(m => m.id).join(', ');
     if (Array.isArray(cliSelection.enable)) {
         for (const id of cliSelection.enable) {
-            if (byId.has(id)) enabledSet.add(id);
+            if (!byId.has(id)) {
+                throw new Error(`Unknown plugin "${id}" in --enable. Available plugins: [${availableIds}]`);
+            }
+            enabledSet.add(id);
         }
     }
     if (Array.isArray(cliSelection.disable)) {
         for (const id of cliSelection.disable) {
+            if (!byId.has(id)) {
+                throw new Error(`Unknown plugin "${id}" in --disable. Available plugins: [${availableIds}]`);
+            }
             enabledSet.delete(id);
         }
     }

@@ -89,7 +89,20 @@ module.exports = {
     }
 
     if (RAIN_MODE === 'always') {
-        mountRain({ intensity: RAIN_DEFAULT_INTENSITY });
+        const ensureAlwaysRain = () => {
+            if (!rainCanvas || !rainCanvas.isConnected) {
+                mountRain({ intensity: RAIN_DEFAULT_INTENSITY });
+            }
+        };
+        ensureAlwaysRain();
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', ensureAlwaysRain);
+        }
+        window.addEventListener('load', ensureAlwaysRain);
+        setTimeout(ensureAlwaysRain, 150);
+        setTimeout(ensureAlwaysRain, 600);
+        setTimeout(ensureAlwaysRain, 2000);
+        setTimeout(ensureAlwaysRain, 5000);
     } else if (RAIN_MODE === 'auto') {
         bus.on('wallpaper:effects', (effects) => {
             if (effects && effects.rain) mountRain(effects.rain);

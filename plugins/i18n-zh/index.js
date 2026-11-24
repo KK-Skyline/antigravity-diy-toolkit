@@ -74,9 +74,9 @@ function cleanTrayJsContent(content) {
 function getI18nState(ctx) {
     if (ctx.shared && ctx.shared.i18n) return ctx.shared.i18n;
     const cfg = ctx.pluginConfig || {};
-    const useTw = cfg.locale === 'zh-TW' || Boolean(ctx.cliFlags && ctx.cliFlags.USE_TW);
+    const useTw = cfg.locale === 'zh-TW';
     const locale = useTw ? 'zh-TW' : 'zh-CN';
-    const brandTitle = cfg.brandTitle || (ctx.cliFlags && ctx.cliFlags.BRAND_TITLE_MODE) || 'english';
+    const brandTitle = cfg.brandTitle || 'english';
     const fullDict = loadDictionary(ctx.rootDir, locale, brandTitle);
     const longEntries = Object.entries(fullDict).sort((a, b) => b[0].length - a[0].length);
     const state = {
