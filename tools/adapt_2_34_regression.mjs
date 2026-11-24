@@ -197,6 +197,7 @@ try {
         assert.match(out1, /loadingOverlay\.js 为纯图标加载页/);
 
         const inspect1 = path.join(tmpBase, 'inspect1');
+        asar.uncache(liveAsar);
         asar.extractAll(liveAsar, inspect1);
         for (const rel of ['dist/preload.js', 'dist/main.js', 'dist/debugConsole.js', 'dist/utils.js', 'dist/keybindings.js', 'dist/menu.js', 'dist/tray.js', 'dist/loadingOverlay.js', 'dist/updater.js']) {
             checkSyntax(path.join(inspect1, rel));
@@ -231,6 +232,7 @@ try {
         // Second install (idempotency + zh-TW mode)
         runEngine(['--tw']);
         const inspect2 = path.join(tmpBase, 'inspect2');
+        asar.uncache(liveAsar);
         asar.extractAll(liveAsar, inspect2);
         for (const rel of ['dist/preload.js', 'dist/menu.js', 'dist/tray.js', 'dist/debugConsole.js', 'dist/keybindings.js', 'dist/updater.js']) {
             checkSyntax(path.join(inspect2, rel));
