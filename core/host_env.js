@@ -119,7 +119,7 @@ function detectInstallationDir(manualDir) {
         ];
         for (const root of registryRoots) {
             try {
-                const output = child_process.execFileSync('reg', ['query', root, '/s', '/f', 'Antigravity', '/d'], { encoding: 'utf-8', stdio: 'pipe' });
+                const output = child_process.execFileSync('reg', ['query', root, '/s', '/f', 'Antigravity', '/d'], { encoding: 'utf-8', stdio: 'pipe', windowsHide: true });
                 for (const line of output.split(/\r?\n/)) {
                     const match = line.match(/^\s*(InstallLocation|DisplayIcon)\s+REG_\w+\s+(.+)$/i);
                     if (!match) continue;
@@ -159,6 +159,88 @@ function detectInstallationDir(manualDir) {
 
     console.error("[错误] 未找到默认安装目录，请使用 --install-dir 手动指定您的安装路径！");
     process.exit(1);
+}
+
+function resolveResourcesDir(installDir) {
+    if (!installDir) return null;
+    const normalized = installDir.replace(/\\/g, '/').replace(/\/$/, '').toLowerCase();
+    const candidates = [];
+    if (fs.existsSync(path.join(installDir, 'resources', 'app.asar'))) {
+        candidates.push(path.join(installDir, 'resources'));
+    }
+    if (fs.existsSync(path.join(installDir, 'Contents', 'Resources', 'app.asar'))) {
+        candidates.push(path.join(installDir, 'Contents', 'Resources'));
+    }
+    if (normalized.endsWith('/resources') && fs.existsSync(path.join(installDir, 'app.asar'))) {
+        candidates.push(installDir);
+    }
+    if (fs.existsSync(path.join(installDir, 'app.asar'))) {
+        candidates.push(installDir);
+    }
+    return candidates[0] ? path.resolve(candidates[0]) : null;
+}
+
+function probeInstallationDir(manualDir = null) {
+    if (manualDir) {
+        if (!fs.existsSync(manualDir)) return null;
+        let resolved = process.platform === 'darwin' ? fs.realpathSync(manualDir) : path.resolve(manualDir);
+        if (fs.statSync(resolved).isFile() && resolved.endsWith('app.asar')) {
+            resolved = path.dirname(resolved);
+        }
+        return resolved;
+    }
+
+    const candidates = [];
+    const seen = new Set();
+    const addCandidate = (candidate) => {
+        if (!candidate) return;
+        const normalized = path.resolve(candidate);
+        const key = process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+        if (!seen.has(key)) {
+            seen.add(key);
+            candidates.push(normalized);
+        }
+    };
+
+    if (process.platform === 'win32') {
+        addCandidate(process.env.ANTIGRAVITY_INSTALL_DIR);
+        addCandidate(process.env.ANTIGRAVITY_HOME);
+        const registryRoots = [
+            'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+            'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall',
+            'HKLM\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall'
+        ];
+        for (const root of registryRoots) {
+            try {
+                const output = child_process.execFileSync('reg', ['query', root, '/s', '/f', 'Antigravity', '/d'], { encoding: 'utf-8', stdio: 'pipe', windowsHide: true });
+                for (const line of output.split(/\r?\n/)) {
+                    const match = line.match(/^\s*(InstallLocation|DisplayIcon)\s+REG_\w+\s+(.+)$/i);
+                    if (!match) continue;
+                    let value = match[2].trim().replace(/^"|"$/g, '');
+                    if (/Antigravity\.exe/i.test(value)) value = path.dirname(value);
+                    addCandidate(value);
+                }
+            } catch (e) {}
+        }
+        for (const drive of ['C', 'D', 'E', 'F']) {
+            addCandidate(`${drive}:\\Programs\\Antigravity`);
+            addCandidate(`${drive}:\\Antigravity`);
+        }
+        addCandidate('C:\\Program Files\\Antigravity');
+        if (process.env.LOCALAPPDATA) {
+            addCandidate(path.join(process.env.LOCALAPPDATA, 'Programs', 'antigravity'));
+        }
+    } else if (process.platform === 'darwin') {
+        addCandidate('/Applications/Antigravity.app');
+        addCandidate(path.join(process.env.HOME || '', 'Applications', 'Antigravity.app'));
+    }
+
+    for (const p of candidates) {
+        if (fs.existsSync(p) && resolveResourcesDir(p)) {
+            return path.resolve(p);
+        }
+    }
+    return null;
 }
 
 function runCommandSync(file, args) {
@@ -258,6 +340,8 @@ module.exports = {
     checkIfAppIsRunning,
     closeAntigravityProcesses,
     detectInstallationDir,
+    probeInstallationDir,
+    resolveResourcesDir,
     runCommandSync,
     cleanElectronCache,
     resignAppOnMac,

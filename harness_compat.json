@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "lastVerifiedVersion": "2.35.0",
+  "lastVerifiedDate": "2026-11-24",
+  "changelogUrl": "https://antigravity.google/changelog",
+  "hookAnchors": [
+    { "id": "preload-exists", "file": "dist/preload.js", "plugin": "core", "required": true, "type": "exists" },
+    { "id": "main-exists", "file": "dist/main.js", "plugin": "wallpaper-engine", "required": true, "type": "exists" },
+    { "id": "devtools-debug-console", "file": "dist/debugConsole.js", "plugin": "devtools", "required": true, "type": "regex", "pattern": "function isDebugConsoleEnabled\\(\\)\\s*\\{\\s*return\\s+(?:!electron_1\\.app\\.isPackaged|true);\\s*\\}" },
+    { "id": "devtools-keybindings", "file": "dist/keybindings.js", "plugin": "devtools", "required": true, "type": "substring", "pattern": "if (isCmdOrCtrl && input.shift && input.key.toLowerCase() === 'n') {" },
+    { "id": "i18n-menu-setapp", "file": "dist/menu.js", "plugin": "i18n-zh", "required": true, "type": "substring", "pattern": "electron_1.Menu.setApplicationMenu(menu);" },
+    { "id": "i18n-menu-wsl", "file": "dist/menu.js", "plugin": "i18n-zh", "required": true, "type": "regex", "pattern": "return \\{ label: '(?:Connect to WSL|连接到 WSL|連線到 WSL)', submenu \\};" },
+    { "id": "i18n-menu-wsl-reopen", "file": "dist/menu.js", "plugin": "i18n-zh", "required": true, "type": "regex", "pattern": "return \\{ label: '(?:Reopen Locally|在本地重新打开|在本機重新開啟)', click: \\(\\) => relaunchWithWslDistro\\(''\\) \\};" },
+    { "id": "i18n-menu-submenu-find", "file": "dist/menu.js", "plugin": "i18n-zh", "required": true, "type": "regex", "pattern": "const submenuItem = appMenu\\.items\\.find\\(\\(item\\) => (?:item\\.label === submenuLabel|submenuAliases\\.includes)" },
+    { "id": "i18n-tray-create", "file": "dist/tray.js", "plugin": "i18n-zh", "required": true, "type": "regex", "pattern": "function createTray\\([^)]*\\)\\s*\\{" },
+    { "id": "i18n-tray-insert", "file": "dist/tray.js", "plugin": "i18n-zh", "required": true, "type": "regex", "pattern": "function insertTrayMenuItem\\([^)]*\\)\\s*\\{" },
+    { "id": "i18n-tray-context", "file": "dist/tray.js", "plugin": "i18n-zh", "required": true, "type": "substring", "pattern": "tray.setContextMenu(contextMenu);" },
+    { "id": "i18n-tray-count", "file": "dist/tray.js", "plugin": "i18n-zh", "required": true, "type": "regex", "pattern": "countItem\\.label\\s*=\\s*(?:\\([\\s\\S]*?' running'|count > 0 \\? `\\$\\{count\\} (?:个智能体运行中|個代理執行中)` : '(?:无运行中的智能体|無執行中的代理)');" },
+    { "id": "i18n-updater-dialog", "file": "dist/updater.js", "plugin": "i18n-zh", "required": true, "type": "regex", "pattern": "                title: '(?:Check for Updates|检查更新|檢查更新)',\\r?\\n                message: '(?:No updates available|暂无可用更新|目前沒有可用的更新)',\\r?\\n                buttons: \\['(?:OK|确定|好)'\\]," },
+    { "id": "i18n-loading-overlay", "file": "dist/loadingOverlay.js", "plugin": "i18n-zh", "required": false, "type": "exists", "note": "2.34+ SVG-only overlay skips text patch" }
+  ],
+  "verifiedHistory": [
+    {
+      "version": "2.34.0",
+      "verifiedAt": "2026-11-24",
+      "status": "adapted",
+      "summary": "Adapted 2.34+ Shell/Sheet transparency, WCV browser-hole, BaseWindow DevTools/Tray, WSL menu, and 97 CN/TW dictionary entries"
+    },
+    {
+      "version": "2.35.0",
+      "verifiedAt": "2026-11-24",
+      "status": "compatible",
+      "summary": "Verified all 6 plugin hooks, fast ASAR patcher, and preload dedup cleanly on 2.35.0"
+    }
+  ]
+}

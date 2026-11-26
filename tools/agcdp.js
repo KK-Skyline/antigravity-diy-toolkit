@@ -13,7 +13,30 @@
 const fs = require('fs');
 const path = require('path');
 
+function getExplicitPort() {
+  const args = process.argv.slice(2);
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--port' && args[i + 1]) return args[i + 1];
+    if (args[i].startsWith('--port=')) return args[i].slice('--port='.length);
+  }
+  return process.env.AG_CDP_PORT || null;
+}
+
 async function findEndpoint() {
+  const explicitPort = getExplicitPort();
+  if (explicitPort) {
+    const n = Number(explicitPort);
+    if (!Number.isInteger(n) || n < 1 || n > 65535) {
+      throw new Error(`无效的 CDP 端口: ${explicitPort}`);
+    }
+    const base = 'http://127.0.0.1:' + n;
+    const res = await fetch(base + '/json/list', { signal: AbortSignal.timeout(3000) });
+    if (!res.ok) throw new Error(`CDP HTTP ${res.status}`);
+    const list = await res.json();
+    if (!Array.isArray(list)) throw new Error('CDP /json/list 响应格式无效');
+    return { base, list, browserWs: '' };
+  }
+
   const candidates = [];
   const seenPorts = new Set();
   const addCandidate = (port, wsPath = '') => {
@@ -36,7 +59,7 @@ async function findEndpoint() {
   for (const c of candidates) {
     try {
       const base = 'http://127.0.0.1:' + c.port;
-      const res = await fetch(base + '/json/list');
+      const res = await fetch(base + '/json/list', { signal: AbortSignal.timeout(3000) });
       if (!res.ok) continue;
       const list = await res.json();
       if (!Array.isArray(list)) continue;
@@ -54,7 +77,7 @@ async function findEndpoint() {
   if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error(notFoundErr);
   const base = 'http://127.0.0.1:' + port;
   try {
-    const res = await fetch(base + '/json/list');
+    const res = await fetch(base + '/json/list', { signal: AbortSignal.timeout(3000) });
     if (!res.ok) throw new Error(notFoundErr);
     const list = await res.json();
     if (!Array.isArray(list)) throw new Error(notFoundErr);
@@ -78,11 +101,33 @@ function open(url) {
   const events = [];
   ws.onmessage = ev => {
     const m = JSON.parse(ev.data);
-    if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
-    else if (m.method) events.push(m);
+    if (m.id && pending.has(m.id)) {
+      const entry = pending.get(m.id);
+      pending.delete(m.id);
+      clearTimeout(entry.timer);
+      entry.resolve(m);
+    } else if (m.method) {
+      events.push(m);
+    }
   };
-  const ready = new Promise((r, j) => { ws.onopen = r; ws.onerror = j; });
-  const send = (method, params = {}) => new Promise(r => { const i = ++id; pending.set(i, r); ws.send(JSON.stringify({ id: i, method, params })); });
+  const ready = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      try { ws.close(); } catch (e) {}
+      reject(new Error('CDP WebSocket 连接超时'));
+    }, 5000);
+    ws.onopen = () => { clearTimeout(timer); resolve(); };
+    ws.onerror = err => { clearTimeout(timer); reject(err instanceof Error ? err : new Error('CDP WebSocket error')); };
+  });
+  const send = (method, params = {}) => new Promise((resolve, reject) => {
+    const i = ++id;
+    const timer = setTimeout(() => {
+      pending.delete(i);
+      try { ws.close(); } catch (e) {}
+      reject(new Error(`CDP send(${method}) 超时`));
+    }, 5000);
+    pending.set(i, { resolve, reject, timer });
+    ws.send(JSON.stringify({ id: i, method, params }));
+  });
   return { ready, send, events, close: () => ws.close() };
 }
 
@@ -97,7 +142,14 @@ async function evaluate(expression) {
 }
 
 (async () => {
-  const [cmd, arg] = process.argv.slice(2);
+  const cleanArgs = [];
+  const rawArgs = process.argv.slice(2);
+  for (let i = 0; i < rawArgs.length; i++) {
+    if (rawArgs[i] === '--port') { i++; continue; }
+    if (rawArgs[i].startsWith('--port=')) continue;
+    cleanArgs.push(rawArgs[i]);
+  }
+  const [cmd, arg] = cleanArgs;
   if (cmd === 'eval') return evaluate(fs.readFileSync(arg, 'utf8'));
   if (cmd === 'eval-inline') return evaluate(arg);
   if (cmd === 'shot') {
