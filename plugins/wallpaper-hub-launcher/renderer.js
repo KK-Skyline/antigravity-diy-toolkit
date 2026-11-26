@@ -4,11 +4,11 @@ module.exports = function mountLauncher(labels, showShortcut) {
     if (window.top !== window) return;
     const { ipcRenderer } = require('electron');
     const isMac = process.platform === 'darwin';
-    const titlebarGroups = 'header, [role="toolbar"], [class*="titlebar"]';
     const titlebarControls = '[data-testid*="sidebar-toggle"], header button, header a, [role="toolbar"] button, [class*="titlebar"] button';
     let button;
     let observedBody;
     let toastTimer;
+    let rafId = 0;
 
     function showError(message) {
         let toast = document.getElementById('ag-hub-launcher-toast');
@@ -60,7 +60,8 @@ module.exports = function mountLauncher(labels, showShortcut) {
             try {
                 const result = await ipcRenderer.invoke('antigravity:open-wallpaper-hub');
                 if (!result?.ok) showError(result?.message || labels.failure);
-            } catch {
+            } catch (error) {
+                console.error('[Wallpaper Hub] IPC invoke failed:', error);
                 showError(labels.failure);
             } finally {
                 btn.disabled = false;
@@ -70,12 +71,21 @@ module.exports = function mountLauncher(labels, showShortcut) {
         return btn;
     }
 
-    const observer = new MutationObserver(records => {
-        if (!button?.isConnected || document.body !== observedBody || records.some(record =>
-            record.target.closest?.(titlebarGroups) ||
-            Array.from(record.addedNodes).some(node => node.matches?.(titlebarControls) || node.querySelector?.(titlebarControls)) ||
-            Array.from(record.removedNodes).some(node => node.matches?.(titlebarControls) || node.querySelector?.(titlebarControls))
-        )) ensureLauncherBtn();
+    function schedulePosition() {
+        if (rafId) return;
+        const schedule = typeof requestAnimationFrame === 'function'
+            ? requestAnimationFrame
+            : fn => setTimeout(fn, 16);
+        rafId = schedule(() => {
+            rafId = 0;
+            if (button?.isConnected) positionButton();
+        });
+    }
+
+    const observer = new MutationObserver(() => {
+        if (!button?.isConnected || document.body !== observedBody) {
+            ensureLauncherBtn();
+        }
     });
     function ensureLauncherBtn() {
         const body = document.body;
@@ -83,14 +93,17 @@ module.exports = function mountLauncher(labels, showShortcut) {
         if (body !== observedBody) {
             observer.disconnect();
             observer.observe(document.documentElement, { childList: true });
-            observer.observe(body, { childList: true, subtree: true });
+            observer.observe(body, { childList: true, subtree: false });
             observedBody = body;
         }
-        if (!button?.isConnected) {
+        const wasConnected = Boolean(button?.isConnected);
+        if (!wasConnected) {
             button = document.getElementById('ag-hub-launcher-btn') || createButton();
             if (!button.isConnected) body.appendChild(button);
+            positionButton();
+        } else {
+            schedulePosition();
         }
-        positionButton();
     }
 
     document.addEventListener('DOMContentLoaded', ensureLauncherBtn);

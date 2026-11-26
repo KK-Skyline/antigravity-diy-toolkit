@@ -9,7 +9,6 @@
   "settingsSchema": {
     "openMode": { "type": "enum", "values": ["browser", "window"], "default": "browser" },
     "showTopLeftButton": { "type": "boolean", "default": true },
-    "showMenuItem": { "type": "boolean", "default": true },
-    "port": { "type": "number", "min": 3210, "max": 3210, "default": 3210 }
+    "showMenuItem": { "type": "boolean", "default": true }
   }
 }

@@ -138,10 +138,12 @@ function loadUserPluginConfig(rootDir) {
         const parsed = JSON.parse(fs.readFileSync(targetPath, 'utf8'));
         return {
             enabled: (parsed?.enabled && typeof parsed.enabled === 'object' && !Array.isArray(parsed.enabled)) ? parsed.enabled : {},
-            settings: (parsed?.settings && typeof parsed.settings === 'object' && !Array.isArray(parsed.settings)) ? parsed.settings : {},
-            isUserConfig: targetPath === userCfgPath
+            settings: (parsed?.settings && typeof parsed.settings === 'object' && !Array.isArray(parsed.settings)) ? parsed.settings : {}
         };
     } catch (error) {
+        if (targetPath === userCfgPath) {
+            throw new Error(`Invalid plugins.config.json: ${error.message}`);
+        }
         console.warn('[AG-Plugin] Could not read plugin configuration:', error.code || error.name);
         return { enabled: {}, settings: {} };
     }
@@ -154,9 +156,9 @@ function resolvePlugins(rootDir, cliSelection = {}) {
 
     const enabledSet = new Set();
     for (const m of manifests) {
-        const modeDefault = cliSelection.defaultEnable?.includes(m.id);
-        const hasFileOverride = Object.hasOwn(fileCfg.enabled, m.id) && (fileCfg.isUserConfig || !modeDefault);
-        const fileEnabled = hasFileOverride ? Boolean(fileCfg.enabled[m.id]) : modeDefault || m.defaultEnabled;
+        const fileEnabled = Object.prototype.hasOwnProperty.call(fileCfg.enabled, m.id)
+            ? Boolean(fileCfg.enabled[m.id])
+            : m.defaultEnabled;
         if (fileEnabled) enabledSet.add(m.id);
     }
 

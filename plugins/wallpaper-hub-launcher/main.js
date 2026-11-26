@@ -8,6 +8,19 @@ module.exports = function registerWallpaperHub(config) {
     const path = require('node:path');
     const { setTimeout: delay } = require('node:timers/promises');
 
+    const DEFAULT_MESSAGES = {
+        hubScriptMissing: 'Wallpaper Hub script not found. Please re-run the installer.',
+        hubReadFailed: 'Unable to read Wallpaper Hub files. Please check toolkit permissions.',
+        hubStartTimeout: 'Wallpaper Hub timed out while starting. Check port 3210 and try again.',
+        hubStartFailed: 'Unable to start Wallpaper Hub. Check Node.js and the toolkit, then try again.',
+        hubPortInUse: 'The service on port 3210 could not be verified as Antigravity Wallpaper Hub.',
+        hubOpenFailed: 'Could not open Wallpaper Hub. Please try again.'
+    };
+    const title = typeof config.title === 'string' && config.title ? config.title : 'Antigravity Wallpaper Hub';
+    const messages = {
+        ...DEFAULT_MESSAGES,
+        ...(config.messages && typeof config.messages === 'object' ? config.messages : {})
+    };
     const url = 'http://127.0.0.1:3210';
     const hubScript = path.join(config.hubDir, 'wallpaper_hub_server.js');
     let inFlight;
@@ -40,14 +53,20 @@ module.exports = function registerWallpaperHub(config) {
         });
     }
 
-    async function probeHub(expectedJs, deadline) {
+    function isValidHubConfig(cfg) {
+        return Boolean(cfg && typeof cfg === 'object' && !Array.isArray(cfg) &&
+            typeof cfg.enabled === 'boolean' &&
+            typeof cfg.workshopId === 'string' &&
+            typeof cfg.opacity === 'number' &&
+            typeof cfg.blur === 'number');
+    }
+
+    async function probeHub(deadline) {
         try {
             const body = await getBody('/api/config', 65536, deadline);
             if (!body) return 'foreign';
             const cfg = JSON.parse(body.toString('utf8'));
-            if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)) return 'foreign';
-            const asset = await getBody('/hub.js', expectedJs.length, deadline);
-            return asset?.equals(expectedJs) ? 'ready' : 'foreign';
+            return isValidHubConfig(cfg) ? 'ready' : 'foreign';
         } catch (error) {
             if (error instanceof SyntaxError) return 'foreign';
             if (error.code === 'ECONNREFUSED') return 'offline';
@@ -76,7 +95,11 @@ module.exports = function registerWallpaperHub(config) {
                 child.stderr.on('data', chunk => { if (!reason) reason = chunk.toString().trim(); });
                 child.once('close', code => {
                     if (code === 0) resolve();
-                    else reject(Object.assign(new Error('Hub starter failed'), { code: reason || 'STARTER_EXIT_' + code }));
+                    else {
+                        const err = Object.assign(new Error('Hub starter failed'), { code: 'STARTER_EXIT_' + code });
+                        if (/^[\w-]{1,48}$/.test(reason)) err.starterReason = reason;
+                        reject(err);
+                    }
                 });
             } else {
                 child.once('spawn', () => { child.unref(); resolve(); });
@@ -101,7 +124,7 @@ module.exports = function registerWallpaperHub(config) {
             return;
         }
         const win = new BrowserWindow({
-            width: 1220, height: 820, title: 'Antigravity 壁纸选择库',
+            width: 1220, height: 820, title,
             autoHideMenuBar: true, backgroundColor: '#0b0f19',
             webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
         });
@@ -110,7 +133,16 @@ module.exports = function registerWallpaperHub(config) {
         const guard = (event, target) => { if (!allowedNavigation(event.url || target)) event.preventDefault(); };
         win.webContents.on('will-navigate', guard);
         win.webContents.on('will-redirect', guard);
-        win.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
+        win.webContents.setWindowOpenHandler(({ url: target }) => {
+            if (!allowedNavigation(target)) return { action: 'deny' };
+            return {
+                action: 'allow',
+                overrideBrowserWindowOptions: {
+                    autoHideMenuBar: true,
+                    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
+                }
+            };
+        });
         try {
             await win.loadURL(url);
         } catch (error) {
@@ -126,7 +158,7 @@ module.exports = function registerWallpaperHub(config) {
                 typeof code === 'string' && /^[\w-]{1,48}$/.test(code) ? code : 'UNKNOWN_ERROR');
         }
         try {
-            await dialog.showMessageBox({ type: 'error', title: 'Antigravity 壁纸选择库', message });
+            await dialog.showMessageBox({ type: 'error', title, message });
         } catch {
             console.error('[Wallpaper Hub]', message);
         }
@@ -134,34 +166,39 @@ module.exports = function registerWallpaperHub(config) {
     }
 
     async function launch() {
-        let expectedJs;
-        try {
-            await fs.promises.access(hubScript, fs.constants.R_OK);
-            expectedJs = await fs.promises.readFile(path.join(config.hubDir, 'hub.js'));
-        } catch (error) {
-            if (error.code === 'ENOENT') {
-                return fail('hub_script_missing', '未找到壁纸选择库脚本，请重新运行安装器。');
+        const timeout = () => fail('hub_start_timeout', messages.hubStartTimeout);
+        let state = await probeHub(Date.now() + 600);
+        if (state === 'pending') {
+            const deadline = Date.now() + 5000;
+            while (Date.now() < deadline) {
+                await delay(Math.min(150, Math.max(0, deadline - Date.now())));
+                state = await probeHub(Math.min(deadline, Date.now() + 600));
+                if (state !== 'pending') break;
             }
-            return fail('hub_read_failed', '无法读取壁纸选择库文件，请检查工具包的访问权限。', error);
         }
-        const timeout = () => fail('hub_start_timeout', '壁纸选择库启动超时，请检查端口 3210 后重试。');
-        let state = await probeHub(expectedJs, Date.now() + 600);
-        if (state === 'pending') return fail('hub_probe_failed', '无法核验端口 3210 上的壁纸选择库，请重试。');
         if (state === 'offline') {
+            try {
+                await fs.promises.access(hubScript, fs.constants.R_OK);
+            } catch (error) {
+                if (error.code === 'ENOENT') {
+                    return fail('hub_script_missing', messages.hubScriptMissing);
+                }
+                return fail('hub_read_failed', messages.hubReadFailed, error);
+            }
             const deadline = Date.now() + 5000;
             try {
                 await startHub(deadline);
             } catch (error) {
                 if (error.code === 'ABORT_ERR') return timeout();
-                return fail('hub_start_failed', '无法启动壁纸选择库，请检查 Node.js 和工具包后重试。', error);
+                return fail('hub_start_failed', messages.hubStartFailed, error);
             }
             while (Date.now() < deadline) {
-                state = await probeHub(expectedJs, Math.min(deadline, Date.now() + 600));
+                state = await probeHub(Math.min(deadline, Date.now() + 600));
                 if (state === 'ready' || state === 'foreign') break;
                 await delay(Math.min(150, Math.max(0, deadline - Date.now())));
             }
         }
-        if (state === 'foreign') return fail('hub_port_in_use', '端口 3210 的服务未能确认为本工具的壁纸选择库。');
+        if (state === 'foreign') return fail('hub_port_in_use', messages.hubPortInUse);
         if (state !== 'ready') return timeout();
         if (config.openMode === 'window') await openWindow();
         else await shell.openExternal(url);
@@ -171,7 +208,7 @@ module.exports = function registerWallpaperHub(config) {
     function openWallpaperHub() {
         if (!inFlight) {
             inFlight = launch()
-                .catch(error => fail('hub_open_failed', '无法打开壁纸选择库，请重试。', error))
+                .catch(error => fail('hub_open_failed', messages.hubOpenFailed, error))
                 .finally(() => { inFlight = null; });
         }
         return inFlight;

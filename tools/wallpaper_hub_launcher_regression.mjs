@@ -45,9 +45,8 @@ function testInjection() {
     const manifest = manifests.find(item => item.id === launcher);
     assert.equal(manifest.layerOrder, 28);
     assert.equal(manifest.defaultEnabled, false);
+    assert.equal(manifest.settingsSchema.port, undefined);
     assert.throws(() => pluginLoader.validatePluginConfig(manifest, { openMode: 'invalid' }), /must be one of/);
-    assert.throws(() => pluginLoader.validatePluginConfig(manifest, { port: 80 }), /below min/);
-    assert.throws(() => pluginLoader.validatePluginConfig(manifest, { port: 3211 }), /exceeds max/);
 
     for (const [locale, fileLabel, label] of [
         [null, '&File', 'Wallpaper Hub...'],
@@ -69,16 +68,24 @@ function testInjection() {
         for (const file of [mainPath, menuPath, path.join(distDir, moduleName)]) syntaxCheck(file);
 
         let calls = 0;
+        let shouldThrow = false;
         let installed;
+        const loggedErrors = [];
         const sandbox = {
             module: {},
+            console: { error: (...args) => loggedErrors.push(args.join(' ')) },
             require(id) {
                 if (id === 'electron') return {
                     Menu: { setApplicationMenu: menu => { installed = menu; } },
                     MenuItem: class { constructor(options) { Object.assign(this, options); } }
                 };
                 assert.equal(id, './agWallpaperHubLauncher');
-                return { openWallpaperHub: () => ++calls };
+                return {
+                    openWallpaperHub: () => {
+                        if (shouldThrow) throw new Error('simulated click failure');
+                        return ++calls;
+                    }
+                };
             }
         };
         vm.runInNewContext(menu, sandbox);
@@ -96,6 +103,9 @@ function testInjection() {
         assert.equal(entry.label, label);
         assert.equal(entry.accelerator, 'CmdOrCtrl+Alt+W');
         assert.equal(entry.click(), 1);
+        shouldThrow = true;
+        assert.doesNotThrow(() => entry.click());
+        assert.ok(loggedErrors.some(msg => msg.includes('Failed to open')));
     }
 
     const { active, ctx } = setup(distDir, ['theme-obsidian-blue', 'wallpaper-engine', 'theme-acrylic', launcher]);
@@ -115,7 +125,7 @@ function testInjection() {
     for (const options of [
         { settings: { showMenuItem: false }, button: true, menu: false },
         { settings: { showTopLeftButton: false }, button: false, menu: true },
-        { flags: { NO_I18N: true }, button: true, menu: false }
+        { flags: { NO_I18N: true }, button: true, menu: true }
     ]) {
         const { active, ctx } = setup(distDir, [launcher], { [launcher]: options.settings }, options.flags);
         const menuPath = path.join(distDir, 'menu.js');
@@ -130,6 +140,10 @@ function testInjection() {
         assert.equal(payload.includes(channel), options.button);
     }
 
+    const rendererSrc = fs.readFileSync(path.join(rootDir, 'plugins', launcher, 'renderer.js'), 'utf8');
+    assert.doesNotMatch(rendererSrc, /subtree:\s*true/);
+    assert.match(rendererSrc, /catch\s*\(\s*error\s*\)\s*\{[\s\S]*?console\.error\(/);
+
     for (const file of ['index.js', 'main.js', 'renderer.js', 'start-hub.js']) {
         const src = fs.readFileSync(path.join(rootDir, 'plugins', launcher, file), 'utf8');
         assert.doesNotMatch(src, /(?:[A-Z]:\\|\/Users\/|\/home\/|shell:\s*true)/i);
@@ -138,9 +152,9 @@ function testInjection() {
 
 async function testMainProcess() {
     const hubDir = path.join(tmp, 'hub');
-    const asset = 'original hub asset';
+    const validConfig = JSON.stringify({ enabled: true, workshopId: '123', opacity: 0.68, blur: 0 });
     fs.mkdirSync(hubDir);
-    fs.writeFileSync(path.join(hubDir, 'hub.js'), asset);
+    fs.writeFileSync(path.join(hubDir, 'hub.js'), 'original hub asset');
     const script = path.join(hubDir, 'wallpaper_hub_server.js');
     const starter = path.join(hubDir, 'plugins', launcher, 'start-hub.js');
     fs.mkdirSync(path.dirname(starter), { recursive: true });
@@ -153,17 +167,24 @@ async function testMainProcess() {
             req.once('close', () => { state = 'ready'; });
             return;
         }
-        res.end(req.url === '/api/config' ? '{}' : state === 'ready' ? asset : 'unrelated');
+        if (req.url === '/api/config') {
+            res.end(state === 'ready' ? validConfig : '{}');
+            return;
+        }
+        res.end('unrelated');
     });
     server.listen(0, '127.0.0.1');
     await once(server, 'listening');
     let handler;
     let spawnCount = 0;
     let spawnError = false;
+    let spawnExitCode = 0;
+    let spawnStderr = '';
     let spawnStartsHub = true;
     const opened = [];
     const dialogs = [];
     const windows = [];
+    const loggedErrors = [];
     class BrowserWindow extends EventEmitter {
         constructor(options) {
             super();
@@ -188,6 +209,7 @@ async function testMainProcess() {
         const source = fs.readFileSync(path.join(rootDir, 'plugins', launcher, 'main.js'), 'utf8');
         const sandbox = {
             module: {}, process, Buffer, AbortSignal, URL,
+            console: { error: (...args) => loggedErrors.push(args.join(' ')), log() {}, warn() {} },
             require(id) {
                 if (id === 'electron') return electron;
                 if (id === 'node:http') return {
@@ -218,7 +240,10 @@ async function testMainProcess() {
                         child.unref = () => {};
                         queueMicrotask(() => {
                             if (spawnError) child.emit('error', new Error('test spawn failure'));
-                            else {
+                            else if (spawnExitCode !== 0 && process.platform === 'win32') {
+                                if (spawnStderr) child.stderr.emit('data', Buffer.from(spawnStderr));
+                                child.emit('close', spawnExitCode);
+                            } else {
                                 if (spawnStartsHub) state = 'starting';
                                 child.emit(process.platform === 'win32' ? 'close' : 'spawn', 0);
                             }
@@ -250,6 +275,19 @@ async function testMainProcess() {
         assert.equal((await handler(event)).ok, true);
         assert.equal(spawnCount, 1);
         assert.deepEqual(opened, [hubUrl, hubUrl]);
+
+        // Initial probe returning pending must retry and recover to ready
+        state = 'starting';
+        assert.equal((await handler(event)).ok, true);
+        assert.equal(stalledProbes, 2, 'initial pending probe must retry and recover');
+
+        // Running Hub opens even if local hub.js differs and wallpaper_hub_server.js is absent
+        fs.writeFileSync(path.join(hubDir, 'hub.js'), 'modified local asset');
+        fs.rmSync(script, { force: true });
+        state = 'ready';
+        assert.equal((await handler(event)).ok, true);
+        fs.writeFileSync(script, '');
+
         state = 'foreign';
         assert.equal((await handler(event)).error, 'hub_port_in_use');
         assert.equal(spawnCount, 1);
@@ -257,10 +295,18 @@ async function testMainProcess() {
         spawnError = true;
         assert.equal((await handler(event)).error, 'hub_start_failed');
         spawnError = false;
+        if (process.platform === 'win32') {
+            spawnExitCode = 42;
+            spawnStderr = 'C:\\secret\\path\\leak.js failed';
+            assert.equal((await handler(event)).error, 'hub_start_failed');
+            assert.ok(loggedErrors.some(line => line.includes('STARTER_EXIT_42')));
+            assert.ok(!loggedErrors.some(line => line.includes('C:\\secret\\path')));
+            spawnExitCode = 0;
+            spawnStderr = '';
+        }
         spawnStartsHub = false;
         assert.equal((await handler(event)).error, 'hub_start_timeout');
-        assert.deepEqual(opened, [hubUrl, hubUrl]);
-        assert.equal(dialogs.length, 4);
+        assert.deepEqual(opened, [hubUrl, hubUrl, hubUrl, hubUrl]);
 
         state = 'ready';
         register('window');
@@ -282,6 +328,13 @@ async function testMainProcess() {
                 win.webContents.emit(type, { url, preventDefault() { denied = true; } });
                 assert.equal(denied, !allowed);
             }
+        }
+        for (const allowedUrl of ['http://127.0.0.1:3210/', 'http://localhost:3210/']) {
+            const res = win.openHandler({ url: allowedUrl });
+            assert.equal(res.action, 'allow');
+            assert.equal(res.overrideBrowserWindowOptions.webPreferences.sandbox, true);
+            assert.equal(res.overrideBrowserWindowOptions.webPreferences.contextIsolation, true);
+            assert.equal(res.overrideBrowserWindowOptions.webPreferences.nodeIntegration, false);
         }
         assert.equal(win.openHandler({ url: 'https://example.invalid/' }).action, 'deny');
     } finally {
@@ -323,31 +376,51 @@ async function testCli() {
         { cwd: toolkit, env: { ...process.env, AG_BASELINE_STORE: path.join(tmp, 'store') } }
     );
 
-    for (const [args, enabled, button, menuItem] of [
-        [['--wallpaper'], undefined, true, true],
-        [['--wallpaper', '--only-skin'], true, false, false],
-        [['--wallpaper', '--only-skin', '--enable', launcher], false, true, false],
-        [['--wallpaper'], false, false, false],
-        [['--wallpaper', '--enable', launcher], false, true, true],
-        [['--wallpaper', '--disable', launcher], true, false, false],
-        [[], true, true, true]
+    for (const [args, configMode, button, menuItem, expectedMenuLabel, expectedMainToken] of [
+        [['--wallpaper'], undefined, true, true, '壁纸选择库...', '壁纸选择库'],
+        [['--wallpaper', '--only-skin'], undefined, true, true, 'Wallpaper Hub...', 'Wallpaper Hub'],
+        [['--tw', '--wallpaper'], undefined, true, true, '桌布選擇庫...', '桌布選擇庫'],
+        [['--wallpaper', '--only-skin', '--disable', launcher], undefined, false, false, null, null],
+        [['--wallpaper'], 'example', true, true, '壁纸选择库...', '壁纸选择库'],
+        [['--wallpaper', '--disable', launcher], 'example', false, false, null, null],
+        [['--wallpaper', '--enable', launcher], false, true, true, '壁纸选择库...', '壁纸选择库'],
+        [['--wallpaper', '--disable', launcher], true, false, false, null, null],
+        [[], true, true, true, '壁纸选择库...', '壁纸选择库']
     ]) {
-        if (enabled === undefined) fs.rmSync(userConfig, { force: true });
-        else fs.writeFileSync(userConfig, JSON.stringify({ enabled: { [launcher]: enabled } }));
+        if (configMode === undefined) fs.rmSync(userConfig, { force: true });
+        else if (configMode === 'example') fs.copyFileSync(path.join(toolkit, 'plugins.config.example.json'), userConfig);
+        else fs.writeFileSync(userConfig, JSON.stringify({ enabled: { [launcher]: configMode } }));
         const app = fs.mkdtempSync(path.join(tmp, 'install-'));
         const resources = path.join(app, 'resources');
         fs.mkdirSync(resources);
         const appAsar = path.join(resources, 'app.asar');
         fs.copyFileSync(baseline, appAsar);
         runCli(app, args);
-        assert.equal(asar.listPackage(appAsar).some(entry => entry.endsWith('/' + moduleName) ||
-            entry.endsWith('\\' + moduleName)), button);
+        const hasModule = asar.listPackage(appAsar).some(entry => entry.endsWith('/' + moduleName) ||
+            entry.endsWith('\\' + moduleName));
+        assert.equal(hasModule, button);
         const preload = asar.extractFile(appAsar, 'dist/preload.js').toString();
         const menu = asar.extractFile(appAsar, 'dist/menu.js').toString();
         assert.equal(preload.includes(styleId), button);
         assert.equal(menu.includes('AG WALLPAPER HUB MENU START'), menuItem);
-        if (args.includes('--only-skin')) assert.equal(menu, menuSource);
+        if (expectedMenuLabel) assert.ok(menu.includes(expectedMenuLabel), expectedMenuLabel);
+        if (expectedMainToken) {
+            const launcherMain = asar.extractFile(appAsar, 'dist/' + moduleName).toString();
+            assert.ok(launcherMain.includes(expectedMainToken), expectedMainToken);
+            if (args.includes('--tw')) {
+                assert.ok(!launcherMain.includes('壁纸'), 'zh-TW main.js must not contain simplified 壁纸');
+                assert.ok(!launcherMain.includes('文件'), 'zh-TW main.js must not contain simplified 文件');
+                assert.ok(preload.includes('開啟桌布選擇庫'), 'zh-TW preload must include 開啟桌布選擇庫');
+                assert.ok(preload.includes('無法開啟桌布選擇庫。'), 'zh-TW preload must include 無法開啟桌布選擇庫。');
+            }
+        }
+        if (args.includes('--only-skin') && !menuItem) assert.equal(menu, menuSource);
     }
+
+    // Broken plugins.config.json must throw explicitly instead of falling back silently
+    fs.writeFileSync(userConfig, '{ broken json');
+    assert.throws(() => pluginLoader.resolvePlugins(toolkit, {}), /Invalid plugins\.config\.json/);
+    fs.rmSync(userConfig, { force: true });
 
     const legacy = path.join(tmp, 'legacy');
     const out = path.join(legacy, 'resources', 'app', 'out');

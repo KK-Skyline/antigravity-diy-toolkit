@@ -147,10 +147,9 @@ const CLI_DISABLE_PLUGINS = parseIdListOption('--disable');
 function getActivePlugins() {
     const enable = [];
     const disable = [];
-    const hubLauncher = 'wallpaper-hub-launcher';
-    if (NO_I18N) disable.push('i18n-zh', hubLauncher);
+    if (NO_I18N) disable.push('i18n-zh');
     if (USE_DARK_BLUE) enable.push('theme-obsidian-blue');
-    if (USE_WALLPAPER) enable.push('wallpaper-engine', 'theme-acrylic', 'fx-rain');
+    if (USE_WALLPAPER) enable.push('wallpaper-engine', 'theme-acrylic', 'fx-rain', 'wallpaper-hub-launcher');
 
     for (const id of CLI_ENABLE_PLUGINS) {
         const idx = disable.indexOf(id);
@@ -172,7 +171,6 @@ function getActivePlugins() {
     }
 
     return pluginLoader.resolvePlugins(__dirname, {
-        defaultEnable: USE_WALLPAPER && !NO_I18N ? [hubLauncher] : [],
         enable,
         disable,
         settings

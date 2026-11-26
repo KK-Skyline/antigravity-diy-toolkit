@@ -20,8 +20,7 @@
     "wallpaper-hub-launcher": {
       "openMode": "browser",
       "showTopLeftButton": true,
-      "showMenuItem": true,
-      "port": 3210
+      "showMenuItem": true
     }
   }
 }

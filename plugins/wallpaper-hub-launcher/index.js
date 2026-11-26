@@ -7,9 +7,56 @@ const mountLauncher = require('./renderer');
 
 function labels(ctx) {
     const locale = ctx.allConfigs?.['i18n-zh']?.locale;
-    if (locale === 'zh-TW') return { menu: '桌布選擇庫...', open: '開啟桌布選擇庫', failure: '無法開啟桌布選擇庫。' };
-    if (locale === 'zh-CN') return { menu: '壁纸选择库...', open: '打开壁纸选择库', failure: '无法打开壁纸选择库。' };
-    return { menu: 'Wallpaper Hub...', open: 'Open Wallpaper Hub', failure: 'Could not open Wallpaper Hub.' };
+    if (locale === 'zh-TW') {
+        return {
+            title: 'Antigravity 桌布選擇庫',
+            menu: '桌布選擇庫...',
+            open: '開啟桌布選擇庫',
+            failure: '無法開啟桌布選擇庫。',
+            messages: {
+                hubScriptMissing: '未找到桌布選擇庫腳本，請重新執行安裝程式。',
+                hubReadFailed: '無法讀取桌布選擇庫檔案，請檢查工具包的存取權限。',
+                hubStartTimeout: '桌布選擇庫啟動逾時，請檢查連接埠 3210 後重試。',
+                hubStartFailed: '無法啟動桌布選擇庫，請檢查 Node.js 與工具包後重試。',
+                hubPortInUse: '連接埠 3210 的服務未能確認為本工具的桌布選擇庫。',
+                hubOpenFailed: '無法開啟桌布選擇庫，請重試。'
+            }
+        };
+    }
+    if (locale === 'zh-CN') {
+        return {
+            title: 'Antigravity 壁纸选择库',
+            menu: '壁纸选择库...',
+            open: '打开壁纸选择库',
+            failure: '无法打开壁纸选择库。',
+            messages: {
+                hubScriptMissing: '未找到壁纸选择库脚本，请重新运行安装器。',
+                hubReadFailed: '无法读取壁纸选择库文件，请检查工具包的访问权限。',
+                hubStartTimeout: '壁纸选择库启动超时，请检查端口 3210 后重试。',
+                hubStartFailed: '无法启动壁纸选择库，请检查 Node.js 和工具包后重试。',
+                hubPortInUse: '端口 3210 的服务未能确认为本工具的壁纸选择库。',
+                hubOpenFailed: '无法打开壁纸选择库，请重试。'
+            }
+        };
+    }
+    return {
+        title: 'Antigravity Wallpaper Hub',
+        menu: 'Wallpaper Hub...',
+        open: 'Open Wallpaper Hub',
+        failure: 'Could not open Wallpaper Hub.',
+        messages: {
+            hubScriptMissing: 'Wallpaper Hub script not found. Please re-run the installer.',
+            hubReadFailed: 'Unable to read Wallpaper Hub files. Please check toolkit permissions.',
+            hubStartTimeout: 'Wallpaper Hub timed out while starting. Check port 3210 and try again.',
+            hubStartFailed: 'Unable to start Wallpaper Hub. Check Node.js and the toolkit, then try again.',
+            hubPortInUse: 'The service on port 3210 could not be verified as Antigravity Wallpaper Hub.',
+            hubOpenFailed: 'Could not open Wallpaper Hub. Please try again.'
+        }
+    };
+}
+
+function shouldShowMenu(ctx) {
+    return Boolean(ctx.pluginConfig.showMenuItem);
 }
 
 function addMenuItem(menu, MenuItem, label) {
@@ -21,13 +68,19 @@ function addMenuItem(menu, MenuItem, label) {
     file.submenu.append(new MenuItem({ type: 'separator' }));
     file.submenu.append(new MenuItem({
         id: 'ag-open-wallpaper-hub', label, accelerator: 'CmdOrCtrl+Alt+W',
-        click: () => require('./agWallpaperHubLauncher').openWallpaperHub()
+        click: () => {
+            try {
+                return require('./agWallpaperHubLauncher').openWallpaperHub();
+            } catch (error) {
+                console.error('[Wallpaper Hub] Failed to open:', error);
+            }
+        }
     }));
 }
 
 function patchMenu(ctx) {
     const menuPath = path.join(ctx.distDir, 'menu.js');
-    const showMenu = ctx.pluginConfig.showMenuItem && !ctx.cliFlags?.NO_I18N;
+    const showMenu = shouldShowMenu(ctx);
     if (!fs.existsSync(menuPath)) {
         if (showMenu) console.warn('[Wallpaper Hub] Missing dist/menu.js');
         return;
@@ -52,7 +105,14 @@ module.exports = {
         if (!ctx.isV2) return;
         const mainPath = path.join(ctx.distDir, 'main.js');
         const original = fs.readFileSync(mainPath, 'utf8');
-        const config = { hubDir: ctx.rootDir, nodeExec: process.execPath, openMode: ctx.pluginConfig.openMode };
+        const loc = labels(ctx);
+        const config = {
+            hubDir: ctx.rootDir,
+            nodeExec: process.execPath,
+            openMode: ctx.pluginConfig.openMode,
+            title: loc.title,
+            messages: loc.messages
+        };
         const moduleCode = "'use strict';\nmodule.exports = (" + registerWallpaperHub.toString() + ')(' + JSON.stringify(config) + ');\n';
         fs.writeFileSync(path.join(ctx.distDir, 'agWallpaperHubLauncher.js'), moduleCode, 'utf8');
         const load = "require('./agWallpaperHubLauncher')";
@@ -73,7 +133,8 @@ module.exports = {
 
     getPreloadRuntime(ctx) {
         if (!ctx.isV2 || !ctx.pluginConfig.showTopLeftButton) return '';
-        const showShortcut = ctx.pluginConfig.showMenuItem && !ctx.cliFlags?.NO_I18N;
-        return '(' + mountLauncher.toString() + ')(' + JSON.stringify(labels(ctx)) + ', ' + showShortcut + ');';
+        const showShortcut = shouldShowMenu(ctx);
+        const loc = labels(ctx);
+        return '(' + mountLauncher.toString() + ')(' + JSON.stringify({ open: loc.open, failure: loc.failure }) + ', ' + showShortcut + ');';
     }
 };
