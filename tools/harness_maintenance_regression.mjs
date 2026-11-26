@@ -15,7 +15,8 @@ const {
     compareSemver,
     validateUpdateUrl,
     parseUpdateYml,
-    fetchRemoteManifest
+    fetchRemoteManifest,
+    sanitizeLocalPaths
 } = await import(new URL('./check_harness_update.mjs', import.meta.url));
 
 const { auditHarnessCompat } = await import(new URL('./audit_harness_compat.mjs', import.meta.url));
@@ -279,6 +280,18 @@ async function runTests() {
             });
             assert.equal(unavail.cdp.status, 'unavailable');
             assert.equal(unavail.verdict, 'COMPATIBLE');
+            assert.ok(!unavail.cdp.reason.includes('Command failed:'), 'cdp.reason must not leak Command failed:');
+            assert.ok(!unavail.cdp.reason.includes(repoRoot), 'cdp.reason must not leak repoRoot');
+
+            const cdpCli = spawnSync(process.execPath, [
+                path.join(repoRoot, 'tools', 'audit_harness_compat.mjs'),
+                '--asar', okAsar, '--compat-file', tmpCompat, '--cdp', '--cdp-port', '59999', '--json'
+            ], { encoding: 'utf8' });
+            assert.equal(cdpCli.status, 0, cdpCli.stderr);
+            const cdpCliJson = JSON.parse(cdpCli.stdout);
+            assert.equal(cdpCliJson.cdp.status, 'unavailable');
+            assert.ok(!cdpCliJson.cdp.reason.includes('Command failed:'));
+            assert.ok(!/[A-Za-z]:\\Users\\[^<]|\/Users\/[^<]|\/home\/[^<]/.test(cdpCliJson.cdp.reason));
 
             const opaqueCdp = await auditHarnessCompat({
                 asarPath: okAsar,
@@ -321,12 +334,28 @@ async function runTests() {
             const probeSrc = fs.readFileSync(probePath, 'utf8');
             assert.ok(probeSrc.includes('[data-testid="conversation-view"]'));
             assert.ok(probeSrc.includes('[data-testid="conversation-row-sidebar"]'));
-            assert.ok(probeSrc.includes('@') && probeSrc.includes('\\.[a-z0-9]{1,8}$'));
+            assert.ok(probeSrc.includes('@') && probeSrc.includes('[\\w.-]+\\.[a-z0-9]{1,8}'));
             execFileSync(process.execPath, ['--check', probePath], { stdio: 'pipe' });
         }
 
-        // 7. Runbook, package.json, and CI workflow checks
+        // 7. Runbook, package.json, CI, and privacy sanitization checks
         {
+            assert.equal(sanitizeLocalPaths('C:\\Users\\Alice\\AppData\\Local\\Temp\\x'), 'C:\\Users\\<USER>\\AppData\\Local\\Temp\\x');
+            assert.equal(sanitizeLocalPaths('/Users/bob/Library/foo'), '/Users/<USER>/Library/foo');
+            assert.equal(sanitizeLocalPaths('/home/carol/bar'), '/home/<USER>/bar');
+            assert.ok(!sanitizeLocalPaths(os.homedir()).includes(path.basename(os.homedir())));
+
+            const chkHomeAsar = await createAuditFixtureAsar(path.join(tmp, 'chk-san'), '2.35.0');
+            const tmpCompatSan = path.join(tmp, 'compat-san.json');
+            fs.copyFileSync(path.join(repoRoot, 'harness_compat.json'), tmpCompatSan);
+            const chkCli = spawnSync(process.execPath, [
+                path.join(repoRoot, 'tools', 'check_harness_update.mjs'),
+                '--asar', chkHomeAsar, '--compat-file', tmpCompatSan, '--json'
+            ], { encoding: 'utf8' });
+            assert.equal(chkCli.status, 0, chkCli.stderr);
+            const chkJson = JSON.parse(chkCli.stdout);
+            assert.ok(!chkJson.installed.asarPath.includes(os.homedir()), 'check_harness_update --json must sanitize home/tmp paths by default');
+
             const ciYml = fs.readFileSync(path.join(repoRoot, '.github', 'workflows', 'ci.yml'), 'utf8');
             assert.ok(ciYml.includes('permissions:') && ciYml.includes('contents: read'));
             assert.ok(ciYml.includes("'auto/**'") && ciYml.includes('tools/harness_maintenance_regression.mjs'));
@@ -336,7 +365,7 @@ async function runTests() {
             assert.deepEqual(Object.keys(pkg.dependencies).sort(), ['@electron/asar', 'minimatch']);
 
             const runbook = fs.readFileSync(path.join(repoRoot, 'docs', 'SELF_ITERATION_RUNBOOK.md'), 'utf8');
-            for (const marker of ['-R', 'git worktree', 'Model: "pro"', 'Reviewed Commit SHA', '--draft', '--match-head-commit', 'gh pr merge']) {
+            for (const marker of ['-R', 'git worktree', 'Model: "pro"', 'Reviewed Commit SHA', '--draft', '--match-head-commit', 'gh pr merge', 'plugins.config.json', 'AppData', 'C:\\\\Users\\\\']) {
                 assert.ok(runbook.includes(marker), `Runbook missing marker: ${marker}`);
             }
         }

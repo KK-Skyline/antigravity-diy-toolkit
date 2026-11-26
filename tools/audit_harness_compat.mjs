@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import * as asar from '@electron/asar';
 import { readAsarArchive, extractSubtree, buildPatchedAsar } from '../core/asar_fast_patch.mjs';
 import { peekBaselineStoreDir } from '../asar_transaction.mjs';
+import { sanitizeLocalPaths } from './check_harness_update.mjs';
 
 const require = createRequire(import.meta.url);
 const __filename = fileURLToPath(import.meta.url);
@@ -344,7 +345,7 @@ function runSandboxMode(inputAsar, sandboxRoot, modeConfig) {
         }
         result.ok = true;
     } catch (err) {
-        result.error = err?.message || String(err);
+        result.error = sanitizeLocalPaths(err?.message || String(err));
     } finally {
         asar.uncache(outAsar);
     }
@@ -452,9 +453,18 @@ function runStageC({ cdpPort = null, cdpRunner = null } = {}) {
             untranslatedCandidates
         };
     } catch (error) {
+        const stderrLine = error?.stderr ? String(error.stderr).trim().split(/\r?\n/)[0] : '';
+        const rawReason = stderrLine && !stderrLine.startsWith('Command failed:')
+            ? stderrLine
+            : (error && typeof error.status === 'number'
+                ? `CDP unavailable (exit ${error.status})`
+                : (error?.code === 'ETIMEDOUT' ? 'CDP unavailable (timeout)' : (error?.message || String(error))));
+        const cleanReason = rawReason.startsWith('Command failed:')
+            ? `CDP unavailable (exit ${error?.status ?? 'timeout'})`
+            : rawReason;
         return {
             status: 'unavailable',
-            reason: error?.message || String(error),
+            reason: sanitizeLocalPaths(cleanReason),
             wallpaperState: null,
             shellTransparencyOk: null,
             shellSelectors: null,
@@ -504,7 +514,7 @@ export async function auditHarnessCompat({
         reasons.push(`Missing/changed required hook anchors: ${stageA.anchors.failed.join(', ')}`);
     }
     for (const m of sandboxModes) {
-        if (!m.ok) reasons.push(`Sandbox mode ${m.mode} failed: ${m.error}`);
+        if (!m.ok) reasons.push(sanitizeLocalPaths(`Sandbox mode ${m.mode} failed: ${m.error}`));
     }
     if (cdp.status === 'ok' && cdp.shellTransparencyOk === false) {
         reasons.push('CDP detected opaque .agy-shell or .agy-inset-shell while acrylic theme is active');
@@ -580,10 +590,11 @@ if (isMain) {
         }
         process.exitCode = report.verdict === 'COMPATIBLE' ? 0 : 2;
     }).catch(err => {
+        const safeMsg = sanitizeLocalPaths(err?.message || String(err));
         if (opts.json) {
-            process.stdout.write(JSON.stringify({ error: err?.message || String(err) }) + '\n');
+            process.stdout.write(JSON.stringify({ error: safeMsg }) + '\n');
         } else {
-            console.error(`[错误] ${err?.message || err}`);
+            console.error(`[错误] ${safeMsg}`);
         }
         process.exitCode = 1;
     });

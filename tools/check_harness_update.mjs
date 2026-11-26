@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import net from 'node:net';
@@ -14,6 +15,31 @@ const { probeInstallationDir, resolveResourcesDir } = require(path.join(repoRoot
 
 const SIGNATURE_START = '/* --- ANTIGRAVITY CHINESE LOCALIZATION START --- */';
 const MAX_MANIFEST_BYTES = 65536; // 64 KiB
+
+export function sanitizeLocalPaths(value) {
+    if (typeof value !== 'string' || !value) return value;
+    let out = value;
+    const candidates = [
+        [process.env.LOCALAPPDATA, '<LOCALAPPDATA>'],
+        [process.env.APPDATA, '<APPDATA>'],
+        [os.tmpdir(), '<TMPDIR>'],
+        [os.homedir(), '<HOME>'],
+        [repoRoot, '<REPO>']
+    ]
+        .filter(([prefix]) => typeof prefix === 'string' && prefix.length >= 3)
+        .sort((a, b) => b[0].length - a[0].length);
+
+    for (const [prefix, token] of candidates) {
+        const escaped = prefix.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        const re = new RegExp(escaped, process.platform === 'win32' ? 'gi' : 'g');
+        out = out.replace(re, token);
+    }
+    out = out
+        .replace(/[A-Za-z]:\\Users\\[^\\/\s"']+/gi, 'C:\\Users\\<USER>')
+        .replace(/\/Users\/[^/\s"']+/g, '/Users/<USER>')
+        .replace(/\/home\/[^/\s"']+/g, '/home/<USER>');
+    return out;
+}
 const ALLOWED_YML_KEYS = new Set(['provider', 'url', 'updaterCacheDirName', 'version', 'releaseDate']);
 const SEMVER_RE = /^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
@@ -390,6 +416,7 @@ function parseCliArgs(argv) {
         asarPath: null,
         compatFile: path.join(repoRoot, 'harness_compat.json'),
         remote: false,
+        includePaths: false,
         json: false,
         failOnUpdate: false
     };
@@ -402,6 +429,7 @@ function parseCliArgs(argv) {
         else if (a === '--compat-file') opts.compatFile = argv[++i] || opts.compatFile;
         else if (a.startsWith('--compat-file=')) opts.compatFile = a.slice('--compat-file='.length);
         else if (a === '--remote') opts.remote = true;
+        else if (a === '--include-paths') opts.includePaths = true;
         else if (a === '--json') opts.json = true;
         else if (a === '--fail-on-update') opts.failOnUpdate = true;
     }
@@ -418,7 +446,20 @@ if (isMain) {
     const opts = parseCliArgs(process.argv.slice(2));
     checkHarnessUpdate(opts).then(result => {
         if (opts.json) {
-            process.stdout.write(JSON.stringify(result, null, 2) + '\n');
+            const output = opts.includePaths
+                ? result
+                : {
+                    ...result,
+                    installed: {
+                        ...result.installed,
+                        asarPath: sanitizeLocalPaths(result.installed.asarPath),
+                        updateYmlPath: sanitizeLocalPaths(result.installed.updateYmlPath)
+                    },
+                    remote: result.remote && result.remote.error
+                        ? { ...result.remote, error: sanitizeLocalPaths(result.remote.error) }
+                        : result.remote
+                };
+            process.stdout.write(JSON.stringify(output, null, 2) + '\n');
         } else {
             console.log(`仓库已核验版本: ${result.repoVerifiedVersion}`);
             console.log(`本机安装版本:   ${result.installed.found ? `${result.installed.version} (${result.installed.localized ? '已注入' : '原版'})` : '未检测到'}`);
@@ -431,10 +472,11 @@ if (isMain) {
             process.exitCode = 10;
         }
     }).catch(err => {
+        const safeMsg = sanitizeLocalPaths(err?.message || String(err));
         if (opts.json) {
-            process.stdout.write(JSON.stringify({ error: err?.message || String(err) }) + '\n');
+            process.stdout.write(JSON.stringify({ error: safeMsg }) + '\n');
         } else {
-            console.error(`[错误] ${err?.message || err}`);
+            console.error(`[错误] ${safeMsg}`);
         }
         process.exitCode = 1;
     });

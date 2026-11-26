@@ -18,11 +18,18 @@ npm run audit:harness
 1. 在独立 git worktree 中操作，绝不触碰主工作区未暂存文件；
 2. 全部 gh 命令必须显式带 -R <origin-owner>/<origin-repo>；
 3. 若需要修改并合入，必须调用独立只读强模型（Model: "pro"，最低不低于强模型 Medium 档位）完成绑定 HEAD SHA 的 Code Review APPROVE（无法调用时 Fail Closed 停在 Draft PR）；
-4. 严禁将未经人工审阅的 untranslatedCandidates 原文粘贴进 PR 正文；
+4. 严禁在 PR 标题、正文、commit 或日志摘要中泄漏本地路径（`C:\Users\`、`/Users/`、`/home/`、`AppData`、`Temp`）、用户名、主机名、未脱敏 `asarPath`/`updateYmlPath`、原始 `cdp.reason` 或未经人工审阅的 `untranslatedCandidates`；
 5. 绝不杀掉运行中的 Antigravity 客户端，也不自动重注入本机。
 ```
 
-### 1.3 未来升级定时巡检（`/automation`）
+### 1.3 五条隐私脱敏铁律
+1. **本地路径默认脱敏**：面向 Agent/CI 的 `--json` 输出与异常消息默认将 `LOCALAPPDATA` / `APPDATA` / `os.tmpdir()` / `os.homedir()` 前缀替换为 `<LOCALAPPDATA>` / `<APPDATA>` / `<TMPDIR>` / `<HOME>`（仅 `--include-paths` 时保留原路径）。
+2. **子进程异常不透传命令行**：捕获 `execFileSync` 报错写入 JSON（如 `cdp.reason`、`sandboxModes[].error`）时只提取精简原因/退出码并过路径脱敏，严禁写入 `Command failed: <node> <tempWorktree>\...`。
+3. **公开 PR 零隐私自检门禁**：PR 标题、正文与 commit 信息发布前必须过脱敏正则检查，严禁出现 `C:\Users\`、`/Users/`、`/home/`、`AppData`、`Temp`、本机用户名、主机名、未脱敏 `asarPath`/`updateYmlPath`、原始 `cdp.reason` 与未经人工审阅的 `untranslatedCandidates`。
+4. **个人配置强制排除**：Step 4 提交前 `git diff --name-only` 排除清单必须覆盖 `wallpaper_config.json`、`CODEX_AUDIT_BRIEF.md`、`last_good_wallpaper.json`、`plugins.config.json` 及 `_backup_before_*`。
+5. **CDP 采集宁缺毋滥**：UI 词条探针过滤必须拦截带后缀的文件名 token（如 `notes.txt (Edited)`）以及单引号/双引号/反引号包裹的片段。
+
+### 1.4 未来升级定时巡检（`/automation`）
 - 本仓库当前采用手动触发，但全部检查与核验脚本均为纯只读、无交互、退出码明确（`check_harness_update.mjs --fail-on-update` 退出码 `10`），未来可零代码改造直接通过 `/automation` 引用本 Runbook 定时巡检。
 
 ---
@@ -77,7 +84,7 @@ node tools/audit_harness_compat.mjs --cdp --json
    - `node tools/adapt_2_34_regression.mjs`
    - `node asar_transaction_regression.mjs`
    - 先只读检查 `127.0.0.1:3210` 是否空闲（**绝不**杀运行中的 `wallpaper_hub_server.js`），空闲则跑 `node security_regression.js`。
-4. 逐文件显式 `git add <files>`（**严禁 `git add -A` 或 `git add .`**），并断言 `git diff --name-only origin/main..HEAD` 不包含 `wallpaper_config.json`、`CODEX_AUDIT_BRIEF.md`、`last_good_wallpaper.json`。
+4. 逐文件显式 `git add <files>`（**严禁 `git add -A` 或 `git add .`**），并断言 `git diff --name-only origin/main..HEAD` 不包含 `wallpaper_config.json`、`CODEX_AUDIT_BRIEF.md`、`last_good_wallpaper.json`、`plugins.config.json` 与 `_backup_before_*`。
 
 ### Step 5 — 独立只读强模型 Code Review（强制 `Model: "pro"` + SHA 绑定 + Fail Closed）
 1. 调用 `invoke_subagent`，强制传入：
@@ -95,7 +102,7 @@ node tools/audit_harness_compat.mjs --cdp --json
    git push -u origin "<branch>"
    gh pr create -R <owner>/<repo> --draft --base main --head "<branch>" --title "..." --body "..."
    ```
-   PR 正文必须包含 **`Review Attestation`** 区块（Reviewer Model、Subagent ID、Reviewed Commit SHA、Verdict）以及脱敏后的 Changelog / Audit / Test 摘要。
+   PR 正文必须包含 **`Review Attestation`** 区块（Reviewer Model、Subagent ID、Reviewed Commit SHA、Verdict）以及脱敏后的 Changelog / Audit / Test 摘要。发 PR 前**必须执行脱敏正则自检**（确认标题/正文/commit 均不含 `C:\\Users\\`、`/Users/`、`/home/`、`AppData`、`Temp`、本机用户名/主机名、未脱敏 `asarPath`/`updateYmlPath`、原始 `cdp.reason` 及未经审阅的 `untranslatedCandidates`）。
 3. 按精确 `HEAD_SHA` 监控 CI：
    ```bash
    gh run list -R <owner>/<repo> --commit "$HEAD_SHA" --workflow "CI" --json databaseId,headSha,status,conclusion,event

@@ -38,9 +38,9 @@
     if (!/[A-Za-z]{2}/.test(t)) return false;
     if (/[\u4e00-\u9fff]/.test(t)) return false;
     if (t.includes('@') || t.includes('://') || t.includes('/') || t.includes('\\')) return false;
-    if (/\.[a-z0-9]{1,8}$/i.test(t)) return false;
+    if (/(?:^|\s)[\w.-]+\.[a-z0-9]{1,8}(?:\s|$|[),;:])/i.test(t)) return false;
     if (/Send feedback as/i.test(t)) return false;
-    if (/'[^']+'/.test(t)) return false;
+    if (/['"`][^'"`]+['"`]/.test(t)) return false;
     if (/^[^\s]+[_-][^\s]+$/.test(t)) return false;
     return true;
   }
