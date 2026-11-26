@@ -48,10 +48,15 @@ function baselineRoot() {
 const LEGACY_BASELINE_ENTRY = /^app\.asar\.baseline(\.json|-[a-f0-9]{64}\.bak(\.json|\.unpacked)?)$/;
 const migratedStores = new Set();
 
-export function baselineStoreDir(dir) {
+export function peekBaselineStoreDir(dir) {
     const resolved = fs.existsSync(dir) ? fs.realpathSync.native(dir) : path.resolve(dir);
     const key = process.platform === 'win32' ? resolved.toLowerCase() : resolved;
-    const store = path.join(baselineRoot(), crypto.createHash('sha256').update(key).digest('hex').slice(0, 16));
+    return path.join(baselineRoot(), crypto.createHash('sha256').update(key).digest('hex').slice(0, 16));
+}
+
+export function baselineStoreDir(dir) {
+    const resolved = fs.existsSync(dir) ? fs.realpathSync.native(dir) : path.resolve(dir);
+    const store = peekBaselineStoreDir(dir);
     if (!migratedStores.has(store)) {
         migrateLegacyBaseline(resolved, store);
         migratedStores.add(store);
