@@ -75,7 +75,18 @@ node localization_engine.js --confirm-unverified-baseline
 - 点任意壁纸卡片展开右侧面板，调好参数点 **「应用」**（勾选自动重启可一键重启客户端生效）；
 - 刚双击 `.bat` 时浏览器可能比 Node 早开半秒导致提示无法连接，等 1 秒按 **F5** 刷新即可；
 - 若提示 `3210` 端口被占用，说明已有一个 Wallpaper Hub 窗口在运行，直接访问 `http://localhost:3210` 或关掉旧窗口即可；
-- 选完壁纸后，直接关闭黑色终端窗口（或在终端按 `Ctrl+C`）即可退出服务。
+- **选完壁纸后**，直接关闭黑色终端窗口（或在终端按 `Ctrl+C`）即可退出服务。
+
+### 4. Antigravity 更新后汉化或壁纸消失了？（AI 自助检查与修复）
+
+Google 更新 Antigravity 客户端时会覆盖 `app.asar`，导致之前的汉化和壁纸暂时消失。仓库已内置只读兼容核验工具与根目录 [AGENTS.md](AGENTS.md)，任何用户都可以直接用 AI 助手自助处理：
+
+1. 用 Antigravity（或 Claude Code / Cursor / Codex）打开本项目文件夹；
+2. 直接对 AI 发送：
+   > `Antigravity 更新了，帮我按 AGENTS.md 检查新版本兼容性；如果兼容就给我重注入命令，如果有失效请先在本地修好并跑通回归测试。`
+3. AI 会自动运行只读核验（`npm run check:update` + `npm run audit:harness`）：
+   - **绝大多数小版本更新**（仅覆盖文件、钩子未变）：直接确认 `COMPATIBLE`，退出客户端执行一次 `--confirm-unverified-baseline` 即可 2 秒恢复；
+   - **大版本改了界面壳层或钩子**：AI 会按报错锚点在本地自动修复并跑通全套回归测试，验证通过后即可恢复使用（也欢迎脱敏后提 PR 帮其他用户一起更新，详细规程见 [docs/SELF_ITERATION_RUNBOOK.md](docs/SELF_ITERATION_RUNBOOK.md)）。
 
 ---
 

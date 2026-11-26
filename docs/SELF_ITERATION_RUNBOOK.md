@@ -1,18 +1,26 @@
 # Antigravity DIY Toolkit — 版本更新自迭代维护 Runbook
 
-本规程用于指导维护 Agent（或人工）在 Antigravity 客户端发布新版本后，安全、可审计、全自动地完成版本检测、兼容性核验、最小适配修复、强模型 Code Review、双平台 CI 验证与自动合入 `main`。
+本规程支持两种使用模式：
+- **模式 A（普通用户本地自救，默认）**：无需 GitHub 写权限或 `gh` 登录，在本地完成版本检测、兼容核验、最小适配修复与回归验证，修复后即可在本机重新注入；如愿意回馈社区，可手动 Fork 提 PR（同样须遵守下文五条隐私脱敏铁律）。
+- **模式 B（仓库维护者全自动迭代）**：在独立 `git worktree` 中完成适配修复、强模型 Code Review、Draft PR、双平台 CI 验证与自动合入 `main`。
 
 ---
 
 ## 一、触发入口
 
-### 1.1 本地只读自检
+### 1.1 本地只读自检（所有用户通用）
 ```bash
 npm run check:update
 npm run audit:harness
 ```
 
-### 1.2 一键启动维护对话的 `/goal` 提示词模板
+### 1.2 普通用户一键自救提示词（无需 `gh` / 无需仓库写权限）
+打开本项目目录后，直接把下面这句话发给你的 AI 编程助手（Antigravity / Claude Code / Cursor / Codex，仓库根目录已有 `AGENTS.md` 会自动引导）：
+```text
+Antigravity 刚更新了，请按 AGENTS.md 和 docs/SELF_ITERATION_RUNBOOK.md 的「模式 A（普通用户本地自救）」帮我检测新版本兼容性；如果兼容就给我重注入命令，如果有钩子或样式失效请先在本地修复并跑通全部回归测试，不要杀掉我当前运行中的客户端。
+```
+
+### 1.3 仓库维护者一键自迭代 `/goal` 提示词模板（模式 B）
 ```text
 /goal 请严格按照 docs/SELF_ITERATION_RUNBOOK.md 执行一次 Antigravity 新版本自迭代维护：
 1. 在独立 git worktree 中操作，绝不触碰主工作区未暂存文件；
@@ -22,14 +30,14 @@ npm run audit:harness
 5. 绝不杀掉运行中的 Antigravity 客户端，也不自动重注入本机。
 ```
 
-### 1.3 五条隐私脱敏铁律
+### 1.4 五条隐私脱敏铁律
 1. **本地路径默认脱敏**：面向 Agent/CI 的 `--json` 输出与异常消息默认将 `LOCALAPPDATA` / `APPDATA` / `os.tmpdir()` / `os.homedir()` 前缀替换为 `<LOCALAPPDATA>` / `<APPDATA>` / `<TMPDIR>` / `<HOME>`（仅 `--include-paths` 时保留原路径）。
 2. **子进程异常不透传命令行**：捕获 `execFileSync` 报错写入 JSON（如 `cdp.reason`、`sandboxModes[].error`）时只提取精简原因/退出码并过路径脱敏，严禁写入 `Command failed: <node> <tempWorktree>\...`。
 3. **公开 PR 零隐私自检门禁**：PR 标题、正文与 commit 信息发布前必须过脱敏正则检查，严禁出现 `C:\Users\`、`/Users/`、`/home/`、`AppData`、`Temp`、本机用户名、主机名、未脱敏 `asarPath`/`updateYmlPath`、原始 `cdp.reason` 与未经人工审阅的 `untranslatedCandidates`。
 4. **个人配置强制排除**：Step 4 提交前 `git diff --name-only` 排除清单必须覆盖 `wallpaper_config.json`、`CODEX_AUDIT_BRIEF.md`、`last_good_wallpaper.json`、`plugins.config.json` 及 `_backup_before_*`。
 5. **CDP 采集宁缺毋滥**：UI 词条探针过滤必须拦截带后缀的文件名 token（如 `notes.txt (Edited)`）以及单引号/双引号/反引号包裹的片段。
 
-### 1.4 未来升级定时巡检（`/automation`）
+### 1.5 未来升级定时巡检（`/automation`）
 - 本仓库当前采用手动触发，但全部检查与核验脚本均为纯只读、无交互、退出码明确（`check_harness_update.mjs --fail-on-update` 退出码 `10`），未来可零代码改造直接通过 `/automation` 引用本 Runbook 定时巡检。
 
 ---
