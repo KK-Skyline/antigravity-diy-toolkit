@@ -1,0 +1,15 @@
+{
+  "id": "wallpaper-hub-launcher",
+  "name": "Top-Left Wallpaper Hub Launcher",
+  "version": "1.0.0",
+  "layerOrder": 28,
+  "defaultEnabled": false,
+  "requires": [],
+  "conflictsWith": [],
+  "settingsSchema": {
+    "openMode": { "type": "enum", "values": ["browser", "window"], "default": "browser" },
+    "showTopLeftButton": { "type": "boolean", "default": true },
+    "showMenuItem": { "type": "boolean", "default": true },
+    "port": { "type": "number", "min": 3210, "max": 3210, "default": 3210 }
+  }
+}

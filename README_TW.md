@@ -99,10 +99,11 @@ node localization_engine.js --tw --brand-title translated
 >    ```
 >    （若只需要桌布換膚、不需要中文化，可改加 `--only-skin`）。
 
-**啟動網頁（兩種方式任選其一）**：
-- **方式 A：Windows 雙擊啟動（推薦）**
+**啟動網頁**
+- **用戶端入口（Antigravity 2.x）**：以 `--wallpaper` 安裝後，點選左上角的圖片按鈕，或在「檔案」選單選擇「桌布選擇庫」。快速鍵為 Windows 的 `Ctrl+Alt+W` 或 macOS 的 `Cmd+Alt+W`。入口會按需啟動 Hub，並在系統瀏覽器開啟 `http://127.0.0.1:3210`。
+- **Windows 雙擊啟動**
   - 在倉庫資料夾直接雙擊 **`双击打开-壁纸选择库.bat`**，將自動啟動本機服務並以預設瀏覽器開啟 `http://localhost:3210`。
-- **方式 B：命令列啟動（Windows / 通用）**
+- **命令列啟動（通用）**
   - 在專案根目錄開啟終端機執行：
     ```powershell
     node wallpaper_hub_server.js
@@ -110,8 +111,10 @@ node localization_engine.js --tw --brand-title translated
   - 服務就緒後，手動於瀏覽器開啟 **`http://localhost:3210`**（或 `http://127.0.0.1:3210`）。
 
 **操作與常見排查**：
-- 點擊任意已訂閱的 Wallpaper Engine 桌布卡片可展開右側抽屜微調透明度、模糊與亮度並一鍵套用（使用完畢關閉終端視窗或按 `Ctrl+C` 即可結束服務）；
-- 若雙擊 `.bat` 後瀏覽器開啟過快顯示無法連線，等待 1 秒按 **F5** 重新整理即可；若提示連接埠 `3210` 已被佔用，表示已有開啟中的 Wallpaper Hub 視窗，直接開啟 `http://localhost:3210` 或關閉舊視窗即可。
+- 點擊任意已訂閱的 Wallpaper Engine 桌布卡片可展開右側抽屜微調透明度、模糊與亮度並一鍵套用；
+- 網頁套用沿用 Hub 的自動安裝目錄尋找和預設安裝選項。從純換膚模式進入後，套用可能重新啟用中文化，也可能重設 `--tw` 和臨時外掛開關。如果安裝只能透過 `--install-dir` 找到，網頁套用會失敗。
+- 若雙擊 `.bat` 後瀏覽器開啟過快顯示無法連線，等待 1 秒按 **F5** 重新整理即可；若提示連接埠 `3210` 已被佔用，請先確認監聽該連接埠的服務，再處理衝突。
+- 從終端機或批次檔啟動時，關閉終端機或按 `Ctrl+C` 可結束服務。從用戶端啟動時，Hub 在背景執行，用戶端重新啟動後仍可存取。
 
 ---
 
@@ -223,5 +226,6 @@ node localization_engine.js --tw --brand-title translated
 
 本專案已將繁簡中文化、DevTools、黑曜石藍、Wallpaper Engine、失重壓克力主題及雨滴特效拆分為 `plugins/*` 下的獨立外掛，由 `core/plugin_loader.js` 與 `core/injector.js` 統一編排：
 - **純換膚（不裝漢化）**：`node localization_engine.js --wallpaper --no-i18n`（或 `--only-skin`），僅注入桌布與主題，不注入中文翻譯；
-- **按外掛開關**：支援 `--enable <id,...>` / `--disable <id,...>`（可用外掛：`i18n-zh`、`devtools`、`theme-obsidian-blue`、`wallpaper-engine`、`theme-acrylic`、`fx-rain`）；
-- **自訂設定**：可複製 `plugins.config.example.json` 為 `plugins.config.json`（已被 `.gitignore` 忽略）。
+- **按外掛開關**：支援 `--enable <id,...>` / `--disable <id,...>`（可用外掛：`i18n-zh`、`devtools`、`theme-obsidian-blue`、`wallpaper-engine`、`theme-acrylic`、`fx-rain`、`wallpaper-hub-launcher`）；
+- **自訂設定**：可複製 `plugins.config.example.json` 為 `plugins.config.json`（已被 `.gitignore` 忽略）。範例中的 `enabled.wallpaper-hub-launcher` 設為 `false`，會覆蓋 `--wallpaper` 的預設啟用。
+- **桌布選擇庫入口**：純換膚預設隱藏入口。加上 `--enable wallpaper-hub-launcher` 可只顯示按鈕，保留原生選單。可在外掛設定中分別控制按鈕和選單，或用 `openMode: "window"` 在用戶端內開啟。若要在重啟時保留頁面，請使用預設的系統瀏覽器模式。

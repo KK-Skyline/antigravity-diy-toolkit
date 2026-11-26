@@ -62,8 +62,9 @@ node localization_engine.js --confirm-unverified-baseline
 
 ### 3. 打开网页选壁纸（Wallpaper Hub）
 
-建好基线后，随时可以通过本地网页挑选和微调 Wallpaper Engine 壁纸，两种启动方式任选其一：
+建好基线后，可以通过本地网页挑选和微调 Wallpaper Engine 壁纸。
 
+- **客户端入口（Antigravity 2.x）**：用 `--wallpaper` 安装后，点击左上角的图片按钮，或在「文件」菜单选择「壁纸选择库」。快捷键为 Windows 的 `Ctrl+Alt+W` 或 macOS 的 `Cmd+Alt+W`。入口会按需启动 Hub，并在系统浏览器打开 `http://127.0.0.1:3210`。
 - **Windows 双击**：在仓库目录直接双击 **`双击打开-壁纸选择库.bat`**，会自动拉起本地服务并打开浏览器 `http://localhost:3210`。
 - **命令行启动**：在仓库根目录运行：
   ```powershell
@@ -73,9 +74,10 @@ node localization_engine.js --confirm-unverified-baseline
 
 **使用与排查**：
 - 点任意壁纸卡片展开右侧面板，调好参数点 **「应用」**（勾选自动重启可一键重启客户端生效）；
+- 网页应用沿用 Hub 的自动安装目录查找和默认安装选项。从纯换肤模式进入后，应用可能重新启用汉化，也可能重置 `--tw` 和临时插件开关。若安装只能通过 `--install-dir` 定位，网页应用会失败。
 - 刚双击 `.bat` 时浏览器可能比 Node 早开半秒导致提示无法连接，等 1 秒按 **F5** 刷新即可；
-- 若提示 `3210` 端口被占用，说明已有一个 Wallpaper Hub 窗口在运行，直接访问 `http://localhost:3210` 或关掉旧窗口即可；
-- **选完壁纸后**，直接关闭黑色终端窗口（或在终端按 `Ctrl+C`）即可退出服务。
+- 若提示 `3210` 端口被占用，先确认监听该端口的服务，再处理冲突；
+- 从终端或批处理启动时，关闭终端或按 `Ctrl+C` 可退出服务。从客户端启动时，Hub 在后台运行，客户端重启后仍可访问。
 
 ### 4. Antigravity 更新后汉化或壁纸消失了？（AI 自助检查与修复）
 
@@ -124,7 +126,7 @@ node localization_engine.js --dark-blue
 # 左上角品牌名样式：english / hidden / translated
 node localization_engine.js --brand-title english
 
-# 按插件 ID 精确开关（可用：i18n-zh, devtools, theme-obsidian-blue, wallpaper-engine, theme-acrylic, fx-rain）
+# 按插件 ID 精确开关（可用：i18n-zh, devtools, theme-obsidian-blue, wallpaper-engine, theme-acrylic, fx-rain, wallpaper-hub-launcher）
 node localization_engine.js --enable wallpaper-engine,theme-acrylic --disable fx-rain
 
 # 恢复到已保存基线
@@ -132,7 +134,8 @@ node localization_engine.js --huifu
 node localization_engine.js --huifu --confirm-unverified-baseline
 ```
 
-- **持久化插件配置**：复制 `plugins.config.example.json` 为 `plugins.config.json`（已被 `.gitignore` 忽略），按需修改各插件开关和参数后，直接运行 `node localization_engine.js` 即可生效。
+- **持久化插件配置**：复制 `plugins.config.example.json` 为 `plugins.config.json`（已被 `.gitignore` 忽略），按需修改各插件开关和参数后，直接运行 `node localization_engine.js` 即可生效。样例中的 `enabled.wallpaper-hub-launcher` 设为 `false`，会覆盖 `--wallpaper` 的默认启用。
+- **壁纸选择库入口**：纯换肤默认隐藏入口。加 `--enable wallpaper-hub-launcher` 可只显示按钮，保留原生菜单。可在插件配置中单独控制按钮和菜单，或用 `openMode: "window"` 在客户端内打开。若要在重启时保留页面，请使用默认的系统浏览器模式。
 - **排障回退**：如遇异常可设置环境变量 `AG_DISABLE_FAST_ASAR=1` 回退至全量解包打包模式。
 - **版本更新自检与兼容性核验**：运行 `npm run check:update` 检测新版本，运行 `npm run audit:harness` 进行只读静态锚点与三模式沙箱核验；Agent 自迭代维护流程见 [docs/SELF_ITERATION_RUNBOOK.md](docs/SELF_ITERATION_RUNBOOK.md)。
 

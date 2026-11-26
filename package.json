@@ -7,6 +7,7 @@
     "audit:harness": "node tools/audit_harness_compat.mjs --cdp",
     "test:dicts": "node tools/compare_dicts.js",
     "test:plugin": "node tools/plugin_architecture_regression.mjs",
+    "test:hub-launcher": "node tools/wallpaper_hub_launcher_regression.mjs",
     "test:fast-asar": "node tools/fast_asar_regression.mjs",
     "test:maintenance": "node tools/harness_maintenance_regression.mjs",
     "test:adapt": "node tools/adapt_2_34_regression.mjs",
