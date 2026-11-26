@@ -123,6 +123,7 @@ node localization_engine.js --huifu --confirm-unverified-baseline
 
 - **持久化插件配置**：复制 `plugins.config.example.json` 为 `plugins.config.json`（已被 `.gitignore` 忽略），按需修改各插件开关和参数后，直接运行 `node localization_engine.js` 即可生效。
 - **排障回退**：如遇异常可设置环境变量 `AG_DISABLE_FAST_ASAR=1` 回退至全量解包打包模式。
+- **版本更新自检与兼容性核验**：运行 `npm run check:update` 检测新版本，运行 `npm run audit:harness` 进行只读静态锚点与三模式沙箱核验；Agent 自迭代维护流程见 [docs/SELF_ITERATION_RUNBOOK.md](docs/SELF_ITERATION_RUNBOOK.md)。
 
 ---
 

@@ -2,6 +2,17 @@
   "engines": {
     "node": ">=22.12.0"
   },
+  "scripts": {
+    "check:update": "node tools/check_harness_update.mjs --remote",
+    "audit:harness": "node tools/audit_harness_compat.mjs --cdp",
+    "test:dicts": "node tools/compare_dicts.js",
+    "test:plugin": "node tools/plugin_architecture_regression.mjs",
+    "test:fast-asar": "node tools/fast_asar_regression.mjs",
+    "test:maintenance": "node tools/harness_maintenance_regression.mjs",
+    "test:adapt": "node tools/adapt_2_34_regression.mjs",
+    "test:asar": "node asar_transaction_regression.mjs",
+    "test:security": "node security_regression.js"
+  },
   "dependencies": {
     "@electron/asar": "4.3.1",
     "minimatch": "10.2.6"
