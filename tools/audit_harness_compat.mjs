@@ -408,6 +408,7 @@ function runStageC({ cdpPort = null, cdpRunner = null } = {}) {
             timeout: 8000,
             windowsHide: true,
             shell: false,
+            stdio: ['ignore', 'pipe', 'pipe'],
             encoding: 'utf8'
         });
     };

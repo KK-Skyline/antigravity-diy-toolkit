@@ -29,14 +29,23 @@ npm run audit:harness
 
 ## 二、标准执行步骤
 
-### Step 0 — 远端解析与隔离 Worktree
+### Step 0 — 版本检测（主仓库只读预检）
+在主仓库根目录先以只读模式执行版本检测（绝不修改任何文件或提前创建分支/worktree）：
+```bash
+node tools/check_harness_update.mjs --remote --json
+```
+- 若 `needsMaintenance === false` → 直接汇报当前已是最新并退出；
+- 若 `canAuditLocally === false`（例如远端已有新版，但本机尚未升级且未提供 `--asar`）→ 提示用户先更新本机 Antigravity 客户端后再触发；**严禁**在未核验新版 `app.asar` 的情况下提前改大 `harness_compat.json` 的 `lastVerifiedVersion`；
+- 仅当 `needsMaintenance === true && canAuditLocally === true` 且拿到精确目标版本号 `version = installed.version` 后，再进入 Step 1。
+
+### Step 1 — 远端解析与隔离 Worktree
 1. 动态解析 `origin` 仓库（本仓库同时存在 `origin` 与 `upstream`，**严禁**省略 `-R` 误操作 `upstream`）：
    ```bash
    ORIGIN_URL=$(git remote get-url origin)
    # 解析出 <owner>/<repo>，后续每一条 gh 命令必须显式带 -R <owner>/<repo>
    ```
 2. 执行 `gh auth status`、`git fetch origin main`、`git worktree prune`。
-3. 目标分支名为 `auto/adapt-antigravity-<version>`：
+3. 目标分支名为 `auto/adapt-antigravity-<version>`（使用 Step 0 获取的精确 `installed.version`）：
    - 先检查 `gh pr list -R <owner>/<repo> --head "<branch>" --state open`；若已有打开的 PR 或 Draft PR，**立即停止**并通知用户接手，防止覆写已有工作；
    - 若仅有残留本地空分支，清理后再建。
 4. 在 `os.tmpdir()` 创建隔离 worktree：
@@ -45,14 +54,6 @@ npm run audit:harness
    ```
 5. 依赖准备：优先将主仓库 `node_modules` 以 `fs.cpSync` 复制到 `<tempWorktree>/node_modules`（离线可用且避免 Windows symlink/junction 隐患）；若不存在再运行 `npm ci --omit=dev --prefer-offline`。
 6. 结束清理（无论成功/失败）：必须先 `cd` 回主仓库根目录，再执行带重试的 `git worktree remove --force "<tempWorktree>"` 与 `git worktree prune`。
-
-### Step 1 — 版本检测
-在隔离 worktree 中执行：
-```bash
-node tools/check_harness_update.mjs --remote --json
-```
-- 若 `needsMaintenance === false` → 清理 worktree，汇报已是最新并退出；
-- 若 `canAuditLocally === false`（例如远端已有新版，但本机尚未升级且未提供 `--asar`）→ 清理 worktree，提示用户先更新本机 Antigravity 客户端后再触发；**严禁**在未核验新版 `app.asar` 的情况下提前改大 `harness_compat.json` 的 `lastVerifiedVersion`。
 
 ### Step 2 — 官方更新日志核验
 检索 `https://antigravity.google/changelog`（覆盖 `repoVerifiedVersion..auditedVersion`），提炼涉及主进程、菜单/托盘、DevTools、Shell/Sheet CSS、内置浏览器及新增 UI 文案的变化。

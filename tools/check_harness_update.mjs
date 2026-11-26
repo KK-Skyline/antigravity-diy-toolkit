@@ -91,6 +91,13 @@ function isForbiddenHost(hostname) {
         if (host.startsWith('::ffff:')) {
             const v4 = host.slice(7);
             if (net.isIP(v4) === 4) return isForbiddenIpv4(v4);
+            const hexPair = /^([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(v4);
+            if (hexPair) {
+                const hi = parseInt(hexPair[1], 16);
+                const lo = parseInt(hexPair[2], 16);
+                return isForbiddenIpv4(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
+            }
+            return true;
         }
         const firstHex = parseInt(host.split(':')[0] || '0', 16);
         if ((firstHex & 0xfe00) === 0xfc00) return true; // fc00::/7

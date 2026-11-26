@@ -120,6 +120,8 @@ async function runTests() {
                 'https://localhost/',
                 'https://169.254.169.254/',
                 'https://[::1]/',
+                'https://[::ffff:127.0.0.1]/',
+                'https://[::ffff:169.254.169.254]/',
                 'https://user:pass@example.com/'
             ]) {
                 assert.throws(() => validateUpdateUrl(bad), `Should reject URL: ${bad}`);
