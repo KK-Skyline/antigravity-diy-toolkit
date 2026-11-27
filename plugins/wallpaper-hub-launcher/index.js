@@ -43,20 +43,8 @@ function labels(ctx) {
         title: 'Antigravity Wallpaper Hub',
         menu: 'Wallpaper Hub...',
         open: 'Open Wallpaper Hub',
-        failure: 'Could not open Wallpaper Hub.',
-        messages: {
-            hubScriptMissing: 'Wallpaper Hub script not found. Please re-run the installer.',
-            hubReadFailed: 'Unable to read Wallpaper Hub files. Please check toolkit permissions.',
-            hubStartTimeout: 'Wallpaper Hub timed out while starting. Check port 3210 and try again.',
-            hubStartFailed: 'Unable to start Wallpaper Hub. Check Node.js and the toolkit, then try again.',
-            hubPortInUse: 'The service on port 3210 could not be verified as Antigravity Wallpaper Hub.',
-            hubOpenFailed: 'Could not open Wallpaper Hub. Please try again.'
-        }
+        failure: 'Could not open Wallpaper Hub.'
     };
-}
-
-function shouldShowMenu(ctx) {
-    return Boolean(ctx.pluginConfig.showMenuItem);
 }
 
 function addMenuItem(menu, MenuItem, label) {
@@ -80,7 +68,7 @@ function addMenuItem(menu, MenuItem, label) {
 
 function patchMenu(ctx) {
     const menuPath = path.join(ctx.distDir, 'menu.js');
-    const showMenu = shouldShowMenu(ctx);
+    const showMenu = Boolean(ctx.pluginConfig.showMenuItem);
     if (!fs.existsSync(menuPath)) {
         if (showMenu) console.warn('[Wallpaper Hub] Missing dist/menu.js');
         return;
@@ -111,7 +99,7 @@ module.exports = {
             nodeExec: process.execPath,
             openMode: ctx.pluginConfig.openMode,
             title: loc.title,
-            messages: loc.messages
+            ...(loc.messages ? { messages: loc.messages } : {})
         };
         const moduleCode = "'use strict';\nmodule.exports = (" + registerWallpaperHub.toString() + ')(' + JSON.stringify(config) + ');\n';
         fs.writeFileSync(path.join(ctx.distDir, 'agWallpaperHubLauncher.js'), moduleCode, 'utf8');
@@ -133,7 +121,7 @@ module.exports = {
 
     getPreloadRuntime(ctx) {
         if (!ctx.isV2 || !ctx.pluginConfig.showTopLeftButton) return '';
-        const showShortcut = shouldShowMenu(ctx);
+        const showShortcut = Boolean(ctx.pluginConfig.showMenuItem);
         const loc = labels(ctx);
         return '(' + mountLauncher.toString() + ')(' + JSON.stringify({ open: loc.open, failure: loc.failure }) + ', ' + showShortcut + ');';
     }

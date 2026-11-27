@@ -134,8 +134,8 @@ node localization_engine.js --huifu
 node localization_engine.js --huifu --confirm-unverified-baseline
 ```
 
-- **持久化插件配置**：复制 `plugins.config.example.json` 为 `plugins.config.json`（已被 `.gitignore` 忽略），按需修改各插件开关和参数后，直接运行 `node localization_engine.js` 即可生效。样例中的 `enabled.wallpaper-hub-launcher` 设为 `false`，会覆盖 `--wallpaper` 的默认启用。
-- **壁纸选择库入口**：纯换肤默认隐藏入口。加 `--enable wallpaper-hub-launcher` 可只显示按钮，保留原生菜单。可在插件配置中单独控制按钮和菜单，或用 `openMode: "window"` 在客户端内打开。若要在重启时保留页面，请使用默认的系统浏览器模式。
+- **持久化插件配置**：复制 `plugins.config.example.json` 为 `plugins.config.json`（已被 `.gitignore` 忽略），按需修改各插件开关和参数后，直接运行 `node localization_engine.js` 即可生效。命令行开关优先于配置文件：使用 `--wallpaper` 时会自动启用 `wallpaper-hub-launcher`（如需关闭请加 `--disable wallpaper-hub-launcher`）；不使用 `--wallpaper` 时可在 `plugins.config.json` 中单独设为 `true` 启用。
+- **壁纸选择库入口**：`--wallpaper --only-skin`（`--no-i18n`）同样会启用入口，并以英文显示左上角按钮与 `File` 下的 `Wallpaper Hub...` 菜单项；如需完全隐藏入口并保持 `dist/menu.js` 零改动，请加 `--disable wallpaper-hub-launcher`。可在插件配置中分别控制 `showTopLeftButton` 和 `showMenuItem`，或将 `openMode` 设为 `"window"` 在客户端内打开（若希望重启客户端后继续保留网页，请保持默认的 `"browser"` 系统浏览器模式）。
 - **排障回退**：如遇异常可设置环境变量 `AG_DISABLE_FAST_ASAR=1` 回退至全量解包打包模式。
 - **版本更新自检与兼容性核验**：运行 `npm run check:update` 检测新版本，运行 `npm run audit:harness` 进行只读静态锚点与三模式沙箱核验；Agent 自迭代维护流程见 [docs/SELF_ITERATION_RUNBOOK.md](docs/SELF_ITERATION_RUNBOOK.md)。
 

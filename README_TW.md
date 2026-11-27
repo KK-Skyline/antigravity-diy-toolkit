@@ -227,5 +227,5 @@ node localization_engine.js --tw --brand-title translated
 本專案已將繁簡中文化、DevTools、黑曜石藍、Wallpaper Engine、失重壓克力主題及雨滴特效拆分為 `plugins/*` 下的獨立外掛，由 `core/plugin_loader.js` 與 `core/injector.js` 統一編排：
 - **純換膚（不裝漢化）**：`node localization_engine.js --wallpaper --no-i18n`（或 `--only-skin`），僅注入桌布與主題，不注入中文翻譯；
 - **按外掛開關**：支援 `--enable <id,...>` / `--disable <id,...>`（可用外掛：`i18n-zh`、`devtools`、`theme-obsidian-blue`、`wallpaper-engine`、`theme-acrylic`、`fx-rain`、`wallpaper-hub-launcher`）；
-- **自訂設定**：可複製 `plugins.config.example.json` 為 `plugins.config.json`（已被 `.gitignore` 忽略）。範例中的 `enabled.wallpaper-hub-launcher` 設為 `false`，會覆蓋 `--wallpaper` 的預設啟用。
-- **桌布選擇庫入口**：純換膚預設隱藏入口。加上 `--enable wallpaper-hub-launcher` 可只顯示按鈕，保留原生選單。可在外掛設定中分別控制按鈕和選單，或用 `openMode: "window"` 在用戶端內開啟。若要在重啟時保留頁面，請使用預設的系統瀏覽器模式。
+- **持久化外掛設定**：複製 `plugins.config.example.json` 為 `plugins.config.json`（已被 `.gitignore` 忽略），依需求修改各外掛開關與參數後，直接執行 `node localization_engine.js` 即可生效。命令列開關優先於設定檔：使用 `--wallpaper` 時會自動啟用 `wallpaper-hub-launcher`（如需關閉請加上 `--disable wallpaper-hub-launcher`）；不使用 `--wallpaper` 時可在 `plugins.config.json` 中單獨設為 `true` 啟用。
+- **桌布選擇庫入口**：`--wallpaper --only-skin`（`--no-i18n`）同樣會啟用入口，並以英文顯示左上角按鈕與 `File` 下的 `Wallpaper Hub...` 選單項目；如需完全隱藏入口並保持 `dist/menu.js` 零更動，請加上 `--disable wallpaper-hub-launcher`。可在外掛設定中分別控制 `showTopLeftButton` 和 `showMenuItem`，或將 `openMode` 設為 `"window"` 在用戶端內開啟（若希望重新啟動用戶端後繼續保留網頁，請保持預設的 `"browser"` 系統瀏覽器模式）。

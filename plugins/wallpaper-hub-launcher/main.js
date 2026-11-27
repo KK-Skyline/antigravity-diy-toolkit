@@ -21,6 +21,7 @@ module.exports = function registerWallpaperHub(config) {
         ...DEFAULT_MESSAGES,
         ...(config.messages && typeof config.messages === 'object' ? config.messages : {})
     };
+    const HUB_WEB_PREFERENCES = { contextIsolation: true, nodeIntegration: false, sandbox: true };
     const url = 'http://127.0.0.1:3210';
     const hubScript = path.join(config.hubDir, 'wallpaper_hub_server.js');
     let inFlight;
@@ -126,7 +127,7 @@ module.exports = function registerWallpaperHub(config) {
         const win = new BrowserWindow({
             width: 1220, height: 820, title,
             autoHideMenuBar: true, backgroundColor: '#0b0f19',
-            webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
+            webPreferences: HUB_WEB_PREFERENCES
         });
         hubWindow = win;
         win.once('closed', () => { if (hubWindow === win) hubWindow = null; });
@@ -139,7 +140,7 @@ module.exports = function registerWallpaperHub(config) {
                 action: 'allow',
                 overrideBrowserWindowOptions: {
                     autoHideMenuBar: true,
-                    webPreferences: { contextIsolation: true, nodeIntegration: false, sandbox: true }
+                    webPreferences: HUB_WEB_PREFERENCES
                 }
             };
         });
@@ -154,8 +155,11 @@ module.exports = function registerWallpaperHub(config) {
     async function fail(error, message, cause) {
         if (cause) {
             const code = cause.code || cause.name;
-            console.error('[Wallpaper Hub]', error,
-                typeof code === 'string' && /^[\w-]{1,48}$/.test(code) ? code : 'UNKNOWN_ERROR');
+            const safeCode = typeof code === 'string' && /^[\w-]{1,48}$/.test(code) ? code : 'UNKNOWN_ERROR';
+            const safeReason = typeof cause.starterReason === 'string' && /^[\w-]{1,48}$/.test(cause.starterReason)
+                ? cause.starterReason
+                : null;
+            console.error('[Wallpaper Hub]', error, safeReason ? `${safeCode}:${safeReason}` : safeCode);
         }
         try {
             await dialog.showMessageBox({ type: 'error', title, message });
@@ -165,16 +169,22 @@ module.exports = function registerWallpaperHub(config) {
         return { ok: false, error, message };
     }
 
+    async function waitForHub(deadline, shouldStop, delayFirst) {
+        let state;
+        while (Date.now() < deadline) {
+            if (delayFirst) await delay(Math.min(150, Math.max(0, deadline - Date.now())));
+            state = await probeHub(Math.min(deadline, Date.now() + 600));
+            if (shouldStop(state)) break;
+            if (!delayFirst) await delay(Math.min(150, Math.max(0, deadline - Date.now())));
+        }
+        return state;
+    }
+
     async function launch() {
         const timeout = () => fail('hub_start_timeout', messages.hubStartTimeout);
         let state = await probeHub(Date.now() + 600);
         if (state === 'pending') {
-            const deadline = Date.now() + 5000;
-            while (Date.now() < deadline) {
-                await delay(Math.min(150, Math.max(0, deadline - Date.now())));
-                state = await probeHub(Math.min(deadline, Date.now() + 600));
-                if (state !== 'pending') break;
-            }
+            state = await waitForHub(Date.now() + 5000, s => s !== 'pending', true) ?? state;
         }
         if (state === 'offline') {
             try {
@@ -192,11 +202,7 @@ module.exports = function registerWallpaperHub(config) {
                 if (error.code === 'ABORT_ERR') return timeout();
                 return fail('hub_start_failed', messages.hubStartFailed, error);
             }
-            while (Date.now() < deadline) {
-                state = await probeHub(Math.min(deadline, Date.now() + 600));
-                if (state === 'ready' || state === 'foreign') break;
-                await delay(Math.min(150, Math.max(0, deadline - Date.now())));
-            }
+            state = await waitForHub(deadline, s => s === 'ready' || s === 'foreign', false) ?? state;
         }
         if (state === 'foreign') return fail('hub_port_in_use', messages.hubPortInUse);
         if (state !== 'ready') return timeout();

@@ -301,6 +301,10 @@ async function testMainProcess() {
             assert.equal((await handler(event)).error, 'hub_start_failed');
             assert.ok(loggedErrors.some(line => line.includes('STARTER_EXIT_42')));
             assert.ok(!loggedErrors.some(line => line.includes('C:\\secret\\path')));
+            spawnExitCode = 1;
+            spawnStderr = 'SPAWN_FAILED';
+            assert.equal((await handler(event)).error, 'hub_start_failed');
+            assert.ok(loggedErrors.some(line => line.includes('STARTER_EXIT_1:SPAWN_FAILED')));
             spawnExitCode = 0;
             spawnStderr = '';
         }
@@ -376,16 +380,22 @@ async function testCli() {
         { cwd: toolkit, env: { ...process.env, AG_BASELINE_STORE: path.join(tmp, 'store') } }
     );
 
-    for (const [args, configMode, button, menuItem, expectedMenuLabel, expectedMainToken] of [
-        [['--wallpaper'], undefined, true, true, '壁纸选择库...', '壁纸选择库'],
-        [['--wallpaper', '--only-skin'], undefined, true, true, 'Wallpaper Hub...', 'Wallpaper Hub'],
-        [['--tw', '--wallpaper'], undefined, true, true, '桌布選擇庫...', '桌布選擇庫'],
+    const parseInjectedConfig = launcherMain => {
+        const match = launcherMain.match(/\)\(([\s\S]*)\);\s*$/);
+        assert.ok(match, 'agWallpaperHubLauncher.js must end with )(config);');
+        return JSON.parse(match[1]);
+    };
+
+    for (const [args, configMode, button, menuItem, expectedMenuLabel, localeMode] of [
+        [['--wallpaper'], undefined, true, true, '壁纸选择库...', 'zh-CN'],
+        [['--wallpaper', '--only-skin'], undefined, true, true, 'Wallpaper Hub...', 'en'],
+        [['--tw', '--wallpaper'], undefined, true, true, '桌布選擇庫...', 'zh-TW'],
         [['--wallpaper', '--only-skin', '--disable', launcher], undefined, false, false, null, null],
-        [['--wallpaper'], 'example', true, true, '壁纸选择库...', '壁纸选择库'],
+        [['--wallpaper'], 'example', true, true, '壁纸选择库...', 'zh-CN'],
         [['--wallpaper', '--disable', launcher], 'example', false, false, null, null],
-        [['--wallpaper', '--enable', launcher], false, true, true, '壁纸选择库...', '壁纸选择库'],
+        [['--wallpaper', '--enable', launcher], false, true, true, '壁纸选择库...', 'zh-CN'],
         [['--wallpaper', '--disable', launcher], true, false, false, null, null],
-        [[], true, true, true, '壁纸选择库...', '壁纸选择库']
+        [[], true, true, true, '壁纸选择库...', 'zh-CN']
     ]) {
         if (configMode === undefined) fs.rmSync(userConfig, { force: true });
         else if (configMode === 'example') fs.copyFileSync(path.join(toolkit, 'plugins.config.example.json'), userConfig);
@@ -404,14 +414,27 @@ async function testCli() {
         assert.equal(preload.includes(styleId), button);
         assert.equal(menu.includes('AG WALLPAPER HUB MENU START'), menuItem);
         if (expectedMenuLabel) assert.ok(menu.includes(expectedMenuLabel), expectedMenuLabel);
-        if (expectedMainToken) {
+        if (localeMode) {
             const launcherMain = asar.extractFile(appAsar, 'dist/' + moduleName).toString();
-            assert.ok(launcherMain.includes(expectedMainToken), expectedMainToken);
-            if (args.includes('--tw')) {
-                assert.ok(!launcherMain.includes('壁纸'), 'zh-TW main.js must not contain simplified 壁纸');
-                assert.ok(!launcherMain.includes('文件'), 'zh-TW main.js must not contain simplified 文件');
+            const injectedConfig = parseInjectedConfig(launcherMain);
+            const serialized = JSON.stringify(injectedConfig);
+            if (localeMode === 'en') {
+                assert.ok(preload.includes('Open Wallpaper Hub'), 'en preload must include Open Wallpaper Hub');
+                assert.ok(preload.includes('Could not open Wallpaper Hub.'), 'en preload must include English failure');
+                assert.ok(!preload.includes('壁纸选择库'), 'en preload must not include zh-CN label');
+                assert.ok(!preload.includes('桌布選擇庫'), 'en preload must not include zh-TW label');
+                assert.equal(injectedConfig.title, 'Antigravity Wallpaper Hub');
+                assert.equal(injectedConfig.messages, undefined);
+                assert.doesNotMatch(serialized, /[\u4e00-\u9fff]/);
+            } else if (localeMode === 'zh-CN') {
+                assert.equal(injectedConfig.title, 'Antigravity 壁纸选择库');
+                assert.ok(injectedConfig.messages.hubScriptMissing.includes('壁纸选择库'));
+            } else if (localeMode === 'zh-TW') {
                 assert.ok(preload.includes('開啟桌布選擇庫'), 'zh-TW preload must include 開啟桌布選擇庫');
                 assert.ok(preload.includes('無法開啟桌布選擇庫。'), 'zh-TW preload must include 無法開啟桌布選擇庫。');
+                assert.equal(injectedConfig.title, 'Antigravity 桌布選擇庫');
+                assert.ok(!serialized.includes('壁纸'), 'zh-TW config must not contain simplified 壁纸');
+                assert.ok(!serialized.includes('文件'), 'zh-TW config must not contain simplified 文件');
             }
         }
         if (args.includes('--only-skin') && !menuItem) assert.equal(menu, menuSource);
