@@ -5,7 +5,8 @@
     "theme-obsidian-blue": false,
     "wallpaper-engine": false,
     "theme-acrylic": false,
-    "fx-rain": false
+    "fx-rain": false,
+    "wallpaper-hub-launcher": false
   },
   "settings": {
     "i18n-zh": {
@@ -15,6 +16,11 @@
     "fx-rain": {
       "mode": "auto",
       "intensity": 0.6
+    },
+    "wallpaper-hub-launcher": {
+      "openMode": "browser",
+      "showTopLeftButton": true,
+      "showMenuItem": true
     }
   }
 }

@@ -21,7 +21,7 @@ const injector = require(path.join(repoRoot, 'core', 'injector.js'));
 
 const SIGNATURE_START = '/* --- ANTIGRAVITY CHINESE LOCALIZATION START --- */';
 const SIGNATURE_END = '/* --- ANTIGRAVITY CHINESE LOCALIZATION END --- */';
-const ALL_PLUGINS = ['devtools', 'theme-obsidian-blue', 'wallpaper-engine', 'theme-acrylic', 'fx-rain', 'i18n-zh'];
+const ALL_PLUGINS = ['devtools', 'theme-obsidian-blue', 'wallpaper-engine', 'theme-acrylic', 'fx-rain', 'wallpaper-hub-launcher', 'i18n-zh'];
 
 const SYNTHETIC_DATA_URL = 'data:image/png;base64,' + 'A'.repeat(256);
 const SYNTHETIC_BAKED_WALLPAPER = {
@@ -282,6 +282,7 @@ function runSandboxMode(inputAsar, sandboxRoot, modeConfig) {
 
         const syntaxTargets = ['preload.js', 'main.js', 'menu.js', 'tray.js', 'debugConsole.js', 'keybindings.js', 'updater.js', 'utils.js'];
         if (useWallpaper) syntaxTargets.push('agWallpaperVideo.js');
+        if (enable.includes('wallpaper-hub-launcher')) syntaxTargets.push('agWallpaperHubLauncher.js');
         for (const rel of syntaxTargets) {
             const p = path.join(distDir, rel);
             if (fs.existsSync(p)) {
@@ -289,6 +290,8 @@ function runSandboxMode(inputAsar, sandboxRoot, modeConfig) {
                 result.checkedFiles.push(`dist/${rel}`);
             } else if (rel === 'agWallpaperVideo.js' && useWallpaper) {
                 throw new Error('Missing dist/agWallpaperVideo.js after wallpaper patchMain');
+            } else if (rel === 'agWallpaperHubLauncher.js') {
+                throw new Error('Missing dist/agWallpaperHubLauncher.js after launcher patchMain');
             }
         }
 
@@ -326,10 +329,14 @@ function runSandboxMode(inputAsar, sandboxRoot, modeConfig) {
             const idxBlue = outPreloadText.indexOf('antigravity-dark-blue-theme');
             const idxWe = outPreloadText.indexOf('antigravity-we-style');
             const idxAcrylic = outPreloadText.indexOf('antigravity-acrylic-theme');
+            const idxLauncher = outPreloadText.indexOf('antigravity-hub-launcher-style');
             const dataUrlCount = outPreloadText.split(SYNTHETIC_DATA_URL).length - 1;
-            result.assertions.layerOrder = idxBlue !== -1 && idxWe !== -1 && idxAcrylic !== -1 && idxBlue < idxWe && idxWe < idxAcrylic;
+            result.assertions.layerOrder = idxBlue !== -1 && idxBlue < idxWe && idxWe < idxAcrylic && idxAcrylic < idxLauncher;
             result.assertions.singleDataUrl = dataUrlCount === 1;
             result.assertions.videoServerInjected = result.checkedFiles.includes('dist/agWallpaperVideo.js');
+            const launcher = asar.extractFile(outAsar, path.join('dist', 'agWallpaperHubLauncher.js'));
+            result.assertions.launcherPackaged = launcher.equals(snap('agWallpaperHubLauncher.js'));
+            result.assertions.launcherMenu = readPatched('menu.js').includes('AG WALLPAPER HUB MENU START');
         } else if (mode === 'skin-only') {
             const menuAfter = snap('menu.js');
             const trayAfter = snap('tray.js');
@@ -338,6 +345,7 @@ function runSandboxMode(inputAsar, sandboxRoot, modeConfig) {
             result.assertions.trayUntouched = (trayBefore === null && trayAfter === null) || (trayBefore && trayAfter && trayBefore.equals(trayAfter));
             result.assertions.updaterUntouched = (updaterBefore === null && updaterAfter === null) || (updaterBefore && updaterAfter && updaterBefore.equals(updaterAfter));
             result.assertions.noI18nInPreload = !outPreloadText.includes('CODE_ISOLATION_SELECTOR');
+            result.assertions.noLauncherInPreload = !outPreloadText.includes('ag-hub-launcher-btn');
         }
 
         if (Object.values(result.assertions).some(v => v !== true)) {
@@ -490,7 +498,7 @@ export async function auditHarnessCompat({
     try {
         const modes = [
             { mode: 'default-i18n', enable: ['devtools', 'i18n-zh'], useWallpaper: false, useDarkBlue: false, noI18n: false },
-            { mode: 'wallpaper-full', enable: ['devtools', 'theme-obsidian-blue', 'wallpaper-engine', 'theme-acrylic', 'fx-rain', 'i18n-zh'], useWallpaper: true, useDarkBlue: true, noI18n: false },
+            { mode: 'wallpaper-full', enable: ['devtools', 'theme-obsidian-blue', 'wallpaper-engine', 'theme-acrylic', 'fx-rain', 'wallpaper-hub-launcher', 'i18n-zh'], useWallpaper: true, useDarkBlue: true, noI18n: false },
             { mode: 'skin-only', enable: ['devtools', 'wallpaper-engine', 'theme-acrylic', 'fx-rain'], useWallpaper: true, useDarkBlue: false, noI18n: true }
         ];
         sandboxModes = modes.map(m => runSandboxMode(input.inputAsar, sandboxRoot, m));

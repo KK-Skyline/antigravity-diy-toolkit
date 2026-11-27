@@ -15,11 +15,11 @@ function runTests() {
     // 1. Default plugins & --dark-blue + --wallpaper coexistence + layerOrder
     {
         const resolved = pluginLoader.resolvePlugins(rootDir, {
-            enable: ['devtools', 'i18n-zh', 'theme-obsidian-blue', 'wallpaper-engine', 'theme-acrylic', 'fx-rain'],
+            enable: ['devtools', 'i18n-zh', 'theme-obsidian-blue', 'wallpaper-engine', 'theme-acrylic', 'fx-rain', 'wallpaper-hub-launcher'],
             disable: []
         });
         const ids = resolved.active.map(p => p.manifest.id);
-        assert.deepEqual(ids, ['devtools', 'theme-obsidian-blue', 'wallpaper-engine', 'theme-acrylic', 'fx-rain', 'i18n-zh']);
+        assert.deepEqual(ids, ['devtools', 'theme-obsidian-blue', 'wallpaper-engine', 'theme-acrylic', 'fx-rain', 'wallpaper-hub-launcher', 'i18n-zh']);
         const baseCtx = injector.buildContextBase({
             rootDir,
             isV2: false,

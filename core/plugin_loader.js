@@ -137,10 +137,14 @@ function loadUserPluginConfig(rootDir) {
     try {
         const parsed = JSON.parse(fs.readFileSync(targetPath, 'utf8'));
         return {
-            enabled: (parsed && typeof parsed.enabled === 'object' && !Array.isArray(parsed.enabled)) ? parsed.enabled : {},
-            settings: (parsed && typeof parsed.settings === 'object' && !Array.isArray(parsed.settings)) ? parsed.settings : {}
+            enabled: (parsed?.enabled && typeof parsed.enabled === 'object' && !Array.isArray(parsed.enabled)) ? parsed.enabled : {},
+            settings: (parsed?.settings && typeof parsed.settings === 'object' && !Array.isArray(parsed.settings)) ? parsed.settings : {}
         };
-    } catch (e) {
+    } catch (error) {
+        if (targetPath === userCfgPath) {
+            throw new Error(`Invalid plugins.config.json: ${error.message}`);
+        }
+        console.warn('[AG-Plugin] Could not read plugin configuration:', error.code || error.name);
         return { enabled: {}, settings: {} };
     }
 }

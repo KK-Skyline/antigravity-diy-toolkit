@@ -149,7 +149,7 @@ function getActivePlugins() {
     const disable = [];
     if (NO_I18N) disable.push('i18n-zh');
     if (USE_DARK_BLUE) enable.push('theme-obsidian-blue');
-    if (USE_WALLPAPER) enable.push('wallpaper-engine', 'theme-acrylic', 'fx-rain');
+    if (USE_WALLPAPER) enable.push('wallpaper-engine', 'theme-acrylic', 'fx-rain', 'wallpaper-hub-launcher');
 
     for (const id of CLI_ENABLE_PLUGINS) {
         const idx = disable.indexOf(id);
