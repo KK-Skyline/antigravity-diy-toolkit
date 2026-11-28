@@ -141,13 +141,227 @@ function testInjection() {
     }
 
     const rendererSrc = fs.readFileSync(path.join(rootDir, 'plugins', launcher, 'renderer.js'), 'utf8');
-    assert.doesNotMatch(rendererSrc, /subtree:\s*true/);
+    assert.match(rendererSrc, /observer\.observe\(body,\s*\{\s*childList:\s*true,\s*subtree:\s*false\s*\}\)/);
+    assert.doesNotMatch(rendererSrc, /observer\.observe\(body,\s*\{[^}]*subtree:\s*true/);
     assert.match(rendererSrc, /catch\s*\(\s*error\s*\)\s*\{[\s\S]*?console\.error\(/);
+
+    const cssSrc = fs.readFileSync(path.join(rootDir, 'plugins', launcher, 'launcher.css'), 'utf8');
+    assert.doesNotMatch(cssSrc, /^\s*(?:top|height):[^;]*!important/m);
 
     for (const file of ['index.js', 'main.js', 'renderer.js', 'start-hub.js']) {
         const src = fs.readFileSync(path.join(rootDir, 'plugins', launcher, file), 'utf8');
         assert.doesNotMatch(src, /(?:[A-Z]:\\|\/Users\/|\/home\/|shell:\s*true)/i);
     }
+}
+
+function testRendererPositioning() {
+    const source = fs.readFileSync(path.join(rootDir, 'plugins', launcher, 'renderer.js'), 'utf8');
+    function createDomEnv() {
+        const makeEl = (tag, props = {}) => {
+            const el = {
+                tagName: tag.toUpperCase(),
+                id: '',
+                type: '',
+                className: '',
+                _textContent: undefined,
+                title: '',
+                disabled: false,
+                isConnected: false,
+                offsetWidth: 58,
+                parentElement: null,
+                children: [],
+                attrs: {},
+                dataset: {},
+                style: { setProperty(k, v) { this[k] = v; } },
+                listeners: {},
+                get textContent() {
+                    if (this._textContent !== undefined) return this._textContent;
+                    return this.children.map(c => c.textContent).join('');
+                },
+                set textContent(v) { this._textContent = v; },
+                setAttribute(k, v) { this.attrs[k] = String(v); },
+                removeAttribute(k) { delete this.attrs[k]; },
+                appendChild(child) {
+                    child.parentElement = this;
+                    this.children.push(child);
+                    child.isConnected = true;
+                    return child;
+                },
+                contains(target) {
+                    let cur = target;
+                    while (cur) {
+                        if (cur === this) return true;
+                        cur = cur.parentElement;
+                    }
+                    return false;
+                },
+                addEventListener(type, fn) { this.listeners[type] = fn; },
+                getBoundingClientRect() { return this._rect || { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 }; },
+                getRootNode() { return this._root || null; },
+                closest() { return null; },
+                ...props
+            };
+            return el;
+        };
+        return { makeEl };
+    }
+
+    function runInDom(menuItems, labels, buildCustomBody) {
+        const { makeEl } = createDomEnv();
+        const items = menuItems.map(item => makeEl('div', {
+            textContent: item.text,
+            _rect: item.rect,
+            _color: item.color || 'rgb(220, 226, 238)',
+            _fontSize: item.fontSize || '12px',
+            closest: sel => (sel.includes('title-menu-bar') ? menuBar : null)
+        }));
+        const menuBar = makeEl('div', { id: 'title-menu-bar', isConnected: true });
+        const body = makeEl('body', { isConnected: true });
+        if (buildCustomBody) buildCustomBody(makeEl, body);
+        const document = {
+            documentElement: makeEl('html'),
+            body,
+            createElement: tag => makeEl(tag),
+            createElementNS: (_ns, tag) => makeEl(tag),
+            getElementById: id => body.children.find(c => c.id === id) || null,
+            addEventListener() {},
+            querySelector: sel => (!buildCustomBody && sel.includes('title-menu-bar') ? menuBar : null),
+            querySelectorAll: sel => (!buildCustomBody && sel.includes('title-menu-bar-item') ? items : [])
+        };
+        class MutationObserver { observe() {} disconnect() {} }
+        class ResizeObserver { observe() {} disconnect() {} }
+        const intervals = new Map();
+        let nextIntervalId = 1;
+        const window = {
+            innerWidth: 1280,
+            addEventListener() {},
+            getComputedStyle: el => ({ color: el._color, fontSize: el._fontSize })
+        };
+        window.top = window;
+        const sandbox = {
+            module: {},
+            process,
+            window,
+            document,
+            MutationObserver,
+            ResizeObserver,
+            requestAnimationFrame: fn => { fn(); return 1; },
+            setTimeout: () => 0,
+            clearTimeout() {},
+            setInterval(fn, ms) {
+                const id = nextIntervalId++;
+                intervals.set(id, { fn, ms });
+                return { id, unref() {} };
+            },
+            clearInterval(handle) {
+                if (handle && typeof handle === 'object') intervals.delete(handle.id);
+                else intervals.delete(handle);
+            },
+            require: id => {
+                assert.equal(id, 'electron');
+                return { ipcRenderer: { invoke: async () => ({ ok: true }) } };
+            }
+        };
+        vm.runInNewContext(source, sandbox);
+        sandbox.module.exports(labels, true);
+        if (buildCustomBody) {
+            return { button: document.getElementById('ag-hub-launcher-btn'), body, makeEl, intervals };
+        }
+        return document.getElementById('ag-hub-launcher-btn');
+    }
+
+    const cnBtn = runInDom([
+        { text: '文件', rect: { left: 90, right: 126, top: 4, bottom: 28, width: 36, height: 24 } },
+        { text: '视图', rect: { left: 130, right: 166, top: 4, bottom: 28, width: 36, height: 24 } },
+        { text: '窗口', rect: { left: 170, right: 206, top: 4, bottom: 28, width: 36, height: 24 } }
+    ], { short: '壁纸', open: '打开壁纸选择库', failure: '无法打开壁纸选择库。' });
+    assert.ok(cnBtn, 'launcher button must be mounted');
+    assert.ok(cnBtn.children.some(c => c.tagName === 'SVG'), 'button must contain svg');
+    const cnLabel = cnBtn.children.find(c => c.className === 'ag-hub-launcher-label');
+    assert.equal(cnLabel?.textContent, '壁纸');
+    assert.equal(cnBtn.style.left, '214px');
+    assert.equal(cnBtn.style.top, '4px');
+    assert.equal(cnBtn.style.height, '24px');
+
+    const fallbackBtn = runInDom([
+        { text: 'File', rect: { left: 84, right: 120, top: 5, bottom: 27, width: 36, height: 22 } },
+        { text: 'View', rect: { left: 124, right: 160, top: 5, bottom: 27, width: 36, height: 22 } }
+    ], { short: 'Wallpaper', open: 'Open Wallpaper Hub', failure: 'Could not open Wallpaper Hub.' });
+    const fallbackLabel = fallbackBtn.children.find(c => c.className === 'ag-hub-launcher-label');
+    assert.equal(fallbackLabel?.textContent, 'Wallpaper');
+    assert.equal(fallbackBtn.style.left, '168px');
+    assert.equal(fallbackBtn.style.top, '5px');
+    assert.equal(fallbackBtn.style.height, '22px');
+
+    // Antigravity 2.36.0 nested div/span topbar without data-testid or .agy-titlebar
+    const { button: v236Btn } = runInDom([], { short: '壁纸', open: '打开壁纸选择库', failure: '无法打开壁纸选择库。' }, (makeEl, body) => {
+        const topbar = makeEl('div', { _rect: { left: 0, right: 1280, top: 0, bottom: 34, width: 1280, height: 34 } });
+        const addItem = (text, boxRect, spanRect) => {
+            const box = makeEl('div', { _rect: boxRect, _color: 'rgb(204, 210, 224)', _fontSize: '12px' });
+            const span = makeEl('span', { textContent: text, _rect: spanRect, _color: 'rgb(204, 210, 224)', _fontSize: '12px' });
+            box.appendChild(span);
+            topbar.appendChild(box);
+        };
+        addItem('Antigravity', { left: 10, right: 98, top: 5, bottom: 29, width: 88, height: 24 }, { left: 18, right: 90, top: 8, bottom: 26, width: 72, height: 18 });
+        addItem('工作区', { left: 102, right: 154, top: 5, bottom: 29, width: 52, height: 24 }, { left: 110, right: 146, top: 8, bottom: 26, width: 36, height: 18 });
+        addItem('视图', { left: 158, right: 196, top: 5, bottom: 29, width: 38, height: 24 }, { left: 166, right: 188, top: 8, bottom: 26, width: 22, height: 18 });
+        addItem('窗口', { left: 200, right: 244, top: 5, bottom: 29, width: 44, height: 24 }, { left: 208, right: 236, top: 8, bottom: 26, width: 28, height: 18 });
+        body.appendChild(topbar);
+
+        // Decoy chat container below top > 56 containing "窗口" must be pruned
+        const chatArea = makeEl('div', { _rect: { left: 0, right: 1280, top: 60, bottom: 800, width: 1280, height: 740 } });
+        const chatDecoy = makeEl('span', { textContent: '窗口', _rect: { left: 400, right: 440, top: 100, bottom: 120, width: 40, height: 20 } });
+        chatArea.appendChild(chatDecoy);
+        body.appendChild(chatArea);
+    });
+    assert.equal(v236Btn.style.left, '252px');
+    assert.equal(v236Btn.style.top, '5px');
+    assert.equal(v236Btn.style.height, '24px');
+
+    // Delayed mount recovery (> 6.2s): #root starts empty, then React hydrates topbar inside #root
+    let delayedRoot;
+    const delayed = runInDom([], { short: '壁纸', open: '打开壁纸选择库', failure: '无法打开壁纸选择库。' }, (makeEl, body) => {
+        delayedRoot = makeEl('div', { id: 'root', _rect: { left: 0, right: 1280, top: 0, bottom: 800, width: 1280, height: 800 } });
+        body.appendChild(delayedRoot);
+    });
+    assert.equal(delayed.button.style.left, '10px');
+    assert.equal(Array.from(delayed.intervals.values())[0]?.ms, 500);
+    {
+        const topbar = delayed.makeEl('div', { _rect: { left: 0, right: 1280, top: 0, bottom: 34, width: 1280, height: 34 } });
+        const winBox = delayed.makeEl('div', { _rect: { left: 200, right: 244, top: 5, bottom: 29, width: 44, height: 24 } });
+        const winSpan = delayed.makeEl('span', { textContent: '窗口', _rect: { left: 208, right: 236, top: 8, bottom: 26, width: 28, height: 18 } });
+        winBox.appendChild(winSpan);
+        topbar.appendChild(winBox);
+        delayedRoot.appendChild(topbar);
+        Array.from(delayed.intervals.values())[0].fn();
+    }
+    assert.equal(delayed.button.style.left, '252px');
+    assert.equal(delayed.button.style.top, '5px');
+    assert.equal(delayed.button.style.height, '24px');
+    assert.equal(Array.from(delayed.intervals.values())[0]?.ms, 2500);
+
+    // 350-node sidebar before topbar + -0.5px DPI subpixel negative top + Open Shadow DOM
+    const { button: shadowBtn } = runInDom([], { short: '壁纸', open: '打开壁纸选择库', failure: '无法打开壁纸选择库。' }, (makeEl, body) => {
+        const sidebar = makeEl('div', { _rect: { left: 0, right: 260, top: 32, bottom: 800, width: 260, height: 768 } });
+        for (let i = 0; i < 350; i++) {
+            sidebar.appendChild(makeEl('div', { textContent: '会话 ' + i, _rect: { left: 10, right: 240, top: 40 + (i % 10) * 30, bottom: 64 + (i % 10) * 30, width: 230, height: 24 } }));
+        }
+        body.appendChild(sidebar);
+
+        const shadowHost = makeEl('div', { _rect: { left: 0, right: 1280, top: 0, bottom: 34, width: 1280, height: 34 } });
+        const shadowRoot = { host: shadowHost, children: [] };
+        const topbar = makeEl('div', { _rect: { left: 0, right: 1280, top: 0, bottom: 34, width: 1280, height: 34 }, _root: shadowRoot });
+        const winBox = makeEl('div', { _rect: { left: 200, right: 244, top: -0.5, bottom: 23.5, width: 44, height: 24 }, _root: shadowRoot });
+        const winSpan = makeEl('span', { textContent: '窗口', _rect: { left: 208, right: 236, top: 2.5, bottom: 20.5, width: 28, height: 18 }, _root: shadowRoot });
+        winBox.appendChild(winSpan);
+        topbar.appendChild(winBox);
+        shadowRoot.children.push(topbar);
+        shadowHost.shadowRoot = shadowRoot;
+        body.appendChild(shadowHost);
+    });
+    assert.equal(shadowBtn.style.left, '252px');
+    assert.equal(shadowBtn.style.top, '2px');
+    assert.equal(shadowBtn.style.height, '24px');
 }
 
 async function testMainProcess() {
@@ -419,6 +633,7 @@ async function testCli() {
             const injectedConfig = parseInjectedConfig(launcherMain);
             const serialized = JSON.stringify(injectedConfig);
             if (localeMode === 'en') {
+                assert.ok(preload.includes('"short":"Wallpaper"'), 'en preload must include short Wallpaper label');
                 assert.ok(preload.includes('Open Wallpaper Hub'), 'en preload must include Open Wallpaper Hub');
                 assert.ok(preload.includes('Could not open Wallpaper Hub.'), 'en preload must include English failure');
                 assert.ok(!preload.includes('壁纸选择库'), 'en preload must not include zh-CN label');
@@ -427,11 +642,14 @@ async function testCli() {
                 assert.equal(injectedConfig.messages, undefined);
                 assert.doesNotMatch(serialized, /[\u4e00-\u9fff]/);
             } else if (localeMode === 'zh-CN') {
+                assert.ok(preload.includes('"short":"壁纸"'), 'zh-CN preload must include short 壁纸 label');
                 assert.equal(injectedConfig.title, 'Antigravity 壁纸选择库');
                 assert.ok(injectedConfig.messages.hubScriptMissing.includes('壁纸选择库'));
             } else if (localeMode === 'zh-TW') {
+                assert.ok(preload.includes('"short":"桌布"'), 'zh-TW preload must include short 桌布 label');
                 assert.ok(preload.includes('開啟桌布選擇庫'), 'zh-TW preload must include 開啟桌布選擇庫');
                 assert.ok(preload.includes('無法開啟桌布選擇庫。'), 'zh-TW preload must include 無法開啟桌布選擇庫。');
+                assert.ok(!preload.includes('"short":"壁纸"'), 'zh-TW preload must not include simplified 壁纸');
                 assert.equal(injectedConfig.title, 'Antigravity 桌布選擇庫');
                 assert.ok(!serialized.includes('壁纸'), 'zh-TW config must not contain simplified 壁纸');
                 assert.ok(!serialized.includes('文件'), 'zh-TW config must not contain simplified 文件');
@@ -461,6 +679,7 @@ async function testCli() {
 try {
     fs.mkdirSync(distDir);
     testInjection();
+    testRendererPositioning();
     await testMainProcess();
     await testCli();
     console.log('Wallpaper Hub launcher regression: PASS');

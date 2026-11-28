@@ -11,6 +11,7 @@ function labels(ctx) {
         return {
             title: 'Antigravity 桌布選擇庫',
             menu: '桌布選擇庫...',
+            short: '桌布',
             open: '開啟桌布選擇庫',
             failure: '無法開啟桌布選擇庫。',
             messages: {
@@ -27,6 +28,7 @@ function labels(ctx) {
         return {
             title: 'Antigravity 壁纸选择库',
             menu: '壁纸选择库...',
+            short: '壁纸',
             open: '打开壁纸选择库',
             failure: '无法打开壁纸选择库。',
             messages: {
@@ -42,6 +44,7 @@ function labels(ctx) {
     return {
         title: 'Antigravity Wallpaper Hub',
         menu: 'Wallpaper Hub...',
+        short: 'Wallpaper',
         open: 'Open Wallpaper Hub',
         failure: 'Could not open Wallpaper Hub.'
     };
@@ -123,6 +126,8 @@ module.exports = {
         if (!ctx.isV2 || !ctx.pluginConfig.showTopLeftButton) return '';
         const showShortcut = Boolean(ctx.pluginConfig.showMenuItem);
         const loc = labels(ctx);
-        return '(' + mountLauncher.toString() + ')(' + JSON.stringify({ open: loc.open, failure: loc.failure }) + ', ' + showShortcut + ');';
+        return '(' + mountLauncher.toString() + ')(' +
+            JSON.stringify({ short: loc.short, open: loc.open, failure: loc.failure }) +
+            ', ' + showShortcut + ');';
     }
 };

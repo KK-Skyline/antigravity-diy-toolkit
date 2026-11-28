@@ -1,37 +1,47 @@
 #ag-hub-launcher-btn {
     position: fixed !important;
-    top: 7px !important;
+    top: 6px;
     left: 10px;
-    width: 26px !important;
-    height: 26px !important;
-    padding: 0 !important;
+    width: auto !important;
+    height: 24px;
+    padding: 0 8px !important;
     margin: 0 !important;
     box-sizing: border-box;
-    display: grid !important;
-    place-items: center;
+    display: inline-flex !important;
+    align-items: center;
+    gap: 5px;
+    white-space: nowrap;
     z-index: 2147483000 !important;
     -webkit-app-region: no-drag !important;
     pointer-events: auto !important;
-    border: 1px solid var(--ag-glass-edge, rgba(255, 255, 255, .14));
-    border-radius: 7px;
-    background: var(--ag-glass-tint, rgba(16, 22, 34, .72));
-    color: #f2f6fa;
-    opacity: .78;
+    border: 1px solid var(--ag-glass-edge, rgba(128, 138, 156, .22));
+    border-radius: 6px;
+    background: var(--ag-state-hover, rgba(128, 138, 156, .10));
+    color: var(--ag-hub-btn-fg, inherit);
+    font: 500 12px/1 system-ui, -apple-system, sans-serif;
+    opacity: .88;
     cursor: pointer;
+    transition: background-color .15s ease, border-color .15s ease, opacity .15s ease;
 }
 #ag-hub-launcher-btn:hover, #ag-hub-launcher-btn:focus-visible {
     opacity: 1;
-    background-color: rgb(var(--ag-accent, 125 212 203) / .22);
+    background-color: rgb(var(--ag-accent, 125 212 203) / .20);
+    border-color: rgb(var(--ag-accent, 125 212 203) / .42);
 }
 #ag-hub-launcher-btn:focus-visible { outline: 2px solid currentColor; }
 #ag-hub-launcher-btn svg {
-    width: 14px;
-    height: 14px;
+    width: 13px;
+    height: 13px;
+    flex-shrink: 0;
     fill: none;
     stroke: currentColor;
     stroke-width: 1.4;
     stroke-linejoin: round;
     stroke-linecap: round;
+}
+#ag-hub-launcher-btn .ag-hub-launcher-label {
+    pointer-events: none;
+    user-select: none;
 }
 #ag-hub-launcher-btn[aria-busy="true"] { cursor: progress; }
 #ag-hub-launcher-btn[aria-busy="true"] svg { animation: ag-hub-launcher-spin .85s linear infinite; }
