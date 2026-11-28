@@ -39,7 +39,7 @@
 - **`双击卸载还原官方英文.bat`** / **`.command`**：Windows / macOS 從已保存基線恢復英文；檔名不代表已驗證官方來源。
 - **`localization_engine.js`**：核心編排入口，負責 7 模組外掛載入、記憶體增量改寫 `app.asar`、版本化基線事務保護以及 macOS 下的自動深度重新簽名。
 - **`dicts_tw/`**：繁體中文化字典資料夾，內含按模組分類的 JSON 對照翻譯字典（與簡體詞庫 100% 鍵對齊）。
-- **`AGENTS.md`** / **`tools/audit_harness_compat.mjs`**：AI 更新後自助相容性診斷與只讀三模式沙箱核驗工具。
+- **`AGENTS.md`** / **`tools/audit_harness_compat.mjs`**：AI 更新後自助相容性診斷與唯讀三模式沙箱核驗工具。
 
 ---
 
@@ -115,7 +115,7 @@ node localization_engine.js --tw --brand-title translated
 - 點擊任意已訂閱的 Wallpaper Engine 桌布卡片可展開右側抽屜微調透明度、模糊與亮度並一鍵套用；
 - 網頁套用沿用 Hub 的自動安裝目錄尋找和預設安裝選項。從純換膚模式進入後，套用可能重新啟用中文化，也可能重設 `--tw` 和臨時外掛開關。如果安裝只能透過 `--install-dir` 找到，網頁套用會失敗。
 - 若雙擊 `.bat` 後瀏覽器開啟過快顯示無法連線，等待 1 秒按 **F5** 重新整理即可；若提示連接埠 `3210` 已被佔用，請先確認監聽該連接埠的服務，再處理衝突。
-- 從終端機或批次檔啟動時，關閉終端機或按 `Ctrl+C` 可結束服務。從用戶端啟動時，Hub 在背景執行，用戶端重新啟動後仍可存取。
+- 從終端機或批次檔啟動時，關閉終端機或按 `Ctrl+C` 可結束服務。從用戶端啟動時，Hub 在背景執行，用戶端重新啟動或升級後仍可存取。
 
 ---
 
@@ -154,7 +154,7 @@ node localization_engine.js --tw --brand-title translated
 > **⚠️ AI 助手如何定位您的中文化詞庫檔案？**
 > 
 > 1. **推薦做法（最省心）**：
->    In Antigravity 軟體中，點擊 **“開啟資料夾 (Open Folder)”**，直接將本中文化包目錄（即包含當前 `README_TW.md` 的資料夾）作為**專案/工作區**開啟，然後在此工作區下與 AI 對話。此時 AI 能夠直接感知並讀寫當前專案，您不需要提供任何路徑，直接發送翻譯要求，AI 就能在背景自動幫您改好詞典！
+>    在 Antigravity 軟體中，點擊 **“開啟資料夾 (Open Folder)”**，直接將本中文化包目錄（即包含當前 `README_TW.md` 的資料夾）作為**專案/工作區**開啟，然後在此工作區下與 AI 對話。此時 AI 能夠直接感知並讀寫當前專案，您不需要提供任何路徑，直接發送翻譯要求，AI 就能在背景自動幫您改好詞典！
 > 
 > 2. **免開專案做法（提示詞中需指定中文化目錄）**：
 >    如果您當前正在開發別的專案，沒有把中文化目錄作為專案開啟，那麼您在對 AI 發起中文化命令時，**必須在提示詞裡明確告訴 AI 您的中文化包所在路徑**，否則 AI 無法得知要修改您電腦上的哪個資料夾。
@@ -186,7 +186,7 @@ node localization_engine.js --tw --brand-title translated
 ## 📝 詞典自訂指南 (供極客手動使用)
 
 如果您想手動修改翻譯，可以直接開啟 `dicts_tw/` 目錄下的 JSON 檔案：
-- **`common.json`**：公共基礎詞彙、側邊栏概覽、登入頁、常用按鈕等。
+- **`common.json`**：公共基礎詞彙、側邊欄概覽、登入頁、常用按鈕等。
 - **`page_settings.json`**：包含極其豐富的詳細設定面板、權限二級選單對照。
 - **`menu_nav.json`**：系統及選單列翻譯。
 
@@ -210,11 +210,11 @@ node localization_engine.js --tw --brand-title translated
   - **macOS**：若雙擊執行 `.command` 提示無法開啟或沒有執行權限，可在終端機中執行 `chmod +x *.command` 來授權。工具會嘗試 Ad-hoc 重新簽名；實際權限、簽章和啟動結果仍須在目標機器驗證。
 
 ### 3）軟體官方更新後，中文化或桌布消失了怎麼辦？（支援 AI 自助檢查與修復）
-* Google 升級 Antigravity 時會覆蓋 `app.asar`。本倉庫已內建只讀相容性核驗工具與根目錄 [AGENTS.md](AGENTS.md)，可直接交由 AI 助手自助診斷：
+* Google 升級 Antigravity 時會覆蓋 `app.asar`。本倉庫已內建唯讀相容性核驗工具與根目錄 [AGENTS.md](AGENTS.md)，可直接交由 AI 助手自助診斷：
   1. 以 Antigravity（或 Claude Code / Cursor / Codex）開啟本專案資料夾；
   2. 直接對 AI 發送：
      > `Antigravity 更新了，請依 AGENTS.md 檢查新版本相容性；若相容請給我重新注入指令，若有鉤子失效請先在本機修好並跑通回歸測試。`
-  3. AI 會自動執行只讀檢測（`npm run check:update` + `npm run audit:harness`）：
+  3. AI 會自動執行唯讀檢測（`npm run check:update` + `npm run audit:harness`）：
      - **一般小版本更新（相容 `COMPATIBLE`）**：完全退出軟體並核對新版 `app.asar` 來源無誤後，執行一次 `node localization_engine.js --tw --wallpaper --confirm-unverified-baseline`（純繁體中文化則去掉 `--wallpaper`）即可約 2 秒完成基線建立與重新注入；
      - **大版本變更介面殼層或鉤子**：AI 會依報錯錨點在本機自動修補外掛並跑通全套回歸測試（進階自迭代流程見 [docs/SELF_ITERATION_RUNBOOK.md](docs/SELF_ITERATION_RUNBOOK.md)）。
 
