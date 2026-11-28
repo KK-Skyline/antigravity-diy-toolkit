@@ -13,6 +13,9 @@ module.exports = function mountLauncher(labels, showShortcut) {
     let observedBody;
     let observedMenuBar;
     let toastTimer;
+    let pollTimer = null;
+    let pollMs = 0;
+    let pollStartedAt = 0;
     let rafId = 0;
 
     function normMenuText(str) {
@@ -48,10 +51,20 @@ module.exports = function mountLauncher(labels, showShortcut) {
         }
 
         if (typeof document.elementsFromPoint === 'function') {
+            const visitedRoots = new Set();
+            const hitPoint = (root, x, y) => {
+                if (!root || visitedRoots.has(root) || typeof root.elementsFromPoint !== 'function') return;
+                visitedRoots.add(root);
+                for (const el of root.elementsFromPoint(x, y)) {
+                    add(el);
+                    if (el?.shadowRoot?.elementsFromPoint) hitPoint(el.shadowRoot, x, y);
+                }
+            };
             const maxX = Math.min(560, Math.floor(window.innerWidth * 0.65));
             for (const y of [12, 18, 26]) {
                 for (let x = 16; x <= maxX; x += 24) {
-                    for (const el of document.elementsFromPoint(x, y)) add(el);
+                    visitedRoots.clear();
+                    hitPoint(document, x, y);
                 }
             }
         }
@@ -59,17 +72,21 @@ module.exports = function mountLauncher(labels, showShortcut) {
         if (document.body) {
             const stack = [document.body];
             let visited = 0;
-            while (stack.length && visited < 250) {
+            while (stack.length && visited < 400) {
                 const node = stack.pop();
                 if (!node || node === button || button?.contains?.(node)) continue;
                 visited++;
                 if (node !== document.body) {
                     const r = node.getBoundingClientRect?.();
-                    if (r && r.height > 0 && r.top > 56) continue;
+                    if (r && r.height > 0 && (r.top > 48 || (r.top >= 26 && r.height > 60))) continue;
                     if (r && r.width > 0 && r.width <= 200 && r.height >= 12 && r.height <= 44 &&
-                        r.top >= 0 && r.bottom <= 52 && r.left < window.innerWidth * 0.7) {
+                        r.top >= -6 && r.bottom <= 52 && r.left < window.innerWidth * 0.7) {
                         candidates.add(node);
                     }
+                }
+                const shadowChildren = node.shadowRoot?.children;
+                if (shadowChildren) {
+                    for (let i = shadowChildren.length - 1; i >= 0; i--) stack.push(shadowChildren[i]);
                 }
                 const children = node.children;
                 if (children) {
@@ -83,11 +100,12 @@ module.exports = function mountLauncher(labels, showShortcut) {
 
     function liftToMenuBox(el, targetText) {
         let cur = el;
-        while (cur.parentElement && cur.parentElement !== document.body) {
-            const parent = cur.parentElement;
+        while (cur) {
+            const parent = cur.parentElement || cur.getRootNode?.()?.host || null;
+            if (!parent || parent === document.body) break;
             if (normMenuText(parent.textContent) !== targetText) break;
             const pr = parent.getBoundingClientRect?.();
-            if (!pr || pr.width <= 0 || pr.width > 200 || pr.height > 44 || pr.top < 0 || pr.bottom > 52) break;
+            if (!pr || pr.width <= 0 || pr.width > 200 || pr.height > 44 || pr.top < -6 || pr.bottom > 52) break;
             cur = parent;
         }
         return cur;
@@ -105,7 +123,7 @@ module.exports = function mountLauncher(labels, showShortcut) {
             seen.add(el);
             const rect = el.getBoundingClientRect?.();
             if (!rect || rect.width <= 0 || rect.width > 200 || rect.height < 12 || rect.height > 44 ||
-                rect.top < 0 || rect.bottom > 52 || rect.left >= window.innerWidth * 0.7) {
+                rect.top < -6 || rect.bottom > 52 || rect.left >= window.innerWidth * 0.7) {
                 continue;
             }
             visible.push({ el, rect, text, isSelectorHit: selectorHits.has(rawEl) || selectorHits.has(el) });
@@ -127,12 +145,12 @@ module.exports = function mountLauncher(labels, showShortcut) {
 
         let menuBar = match.el.closest?.(MENUBAR_SELECTOR);
         if (!menuBar) {
-            let p = match.el.parentElement;
+            let p = match.el.parentElement || match.el.getRootNode?.()?.host || null;
             while (p && p !== document.body) {
                 const pr = p.getBoundingClientRect?.();
-                if (!pr || pr.top < 0 || pr.bottom > 56 || pr.height > 52) break;
+                if (!pr || pr.top < -6 || pr.bottom > 56 || pr.height > 52) break;
                 menuBar = p;
-                p = p.parentElement;
+                p = p.parentElement || p.getRootNode?.()?.host || null;
             }
         }
         return { menuBar, anchor: match.el, rect: match.rect };
@@ -216,6 +234,7 @@ module.exports = function mountLauncher(labels, showShortcut) {
             if (button?.isConnected) {
                 const menuBar = positionButton();
                 syncMenuBarObserver(menuBar);
+                scheduleKeepAlive();
             }
         });
     }
@@ -225,12 +244,43 @@ module.exports = function mountLauncher(labels, showShortcut) {
     const MENU_OBS_OPTS = { childList: true, subtree: true, characterData: true };
 
     function syncMenuBarObserver(menuBar) {
+        if (observedMenuBar && !observedMenuBar.isConnected) observedMenuBar = null;
         if (!menuBar || menuBar === observedMenuBar) return;
         menubarObserver.disconnect();
         resizeObserver?.disconnect();
         menubarObserver.observe(menuBar, MENU_OBS_OPTS);
         resizeObserver?.observe(menuBar);
         observedMenuBar = menuBar;
+    }
+
+    function stopPolling() {
+        if (pollTimer) {
+            clearInterval(pollTimer);
+            pollTimer = null;
+            pollMs = 0;
+        }
+    }
+
+    function scheduleKeepAlive() {
+        let targetMs;
+        if (!observedMenuBar?.isConnected) {
+            if (!pollStartedAt) pollStartedAt = Date.now();
+            targetMs = (Date.now() - pollStartedAt) > 60000 ? 2500 : 500;
+        } else {
+            pollStartedAt = 0;
+            targetMs = 2500;
+        }
+        if (pollMs === targetMs && pollTimer) return;
+        stopPolling();
+        pollMs = targetMs;
+        pollTimer = setInterval(() => {
+            if (!button?.isConnected || !observedMenuBar?.isConnected) {
+                ensureLauncherBtn();
+            } else {
+                scheduleKeepAlive();
+            }
+        }, targetMs);
+        pollTimer?.unref?.();
     }
 
     const observer = new MutationObserver(() => {
@@ -256,6 +306,7 @@ module.exports = function mountLauncher(labels, showShortcut) {
         } else {
             schedulePosition();
         }
+        scheduleKeepAlive();
     }
 
     document.addEventListener('DOMContentLoaded', ensureLauncherBtn);

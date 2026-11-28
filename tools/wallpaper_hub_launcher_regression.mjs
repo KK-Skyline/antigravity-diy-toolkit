@@ -197,6 +197,7 @@ function testRendererPositioning() {
                 },
                 addEventListener(type, fn) { this.listeners[type] = fn; },
                 getBoundingClientRect() { return this._rect || { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 }; },
+                getRootNode() { return this._root || null; },
                 closest() { return null; },
                 ...props
             };
@@ -214,8 +215,8 @@ function testRendererPositioning() {
             _fontSize: item.fontSize || '12px',
             closest: sel => (sel.includes('title-menu-bar') ? menuBar : null)
         }));
-        const menuBar = makeEl('div', { id: 'title-menu-bar' });
-        const body = makeEl('body');
+        const menuBar = makeEl('div', { id: 'title-menu-bar', isConnected: true });
+        const body = makeEl('body', { isConnected: true });
         if (buildCustomBody) buildCustomBody(makeEl, body);
         const document = {
             documentElement: makeEl('html'),
@@ -229,6 +230,8 @@ function testRendererPositioning() {
         };
         class MutationObserver { observe() {} disconnect() {} }
         class ResizeObserver { observe() {} disconnect() {} }
+        const intervals = new Map();
+        let nextIntervalId = 1;
         const window = {
             innerWidth: 1280,
             addEventListener() {},
@@ -245,6 +248,15 @@ function testRendererPositioning() {
             requestAnimationFrame: fn => { fn(); return 1; },
             setTimeout: () => 0,
             clearTimeout() {},
+            setInterval(fn, ms) {
+                const id = nextIntervalId++;
+                intervals.set(id, { fn, ms });
+                return { id, unref() {} };
+            },
+            clearInterval(handle) {
+                if (handle && typeof handle === 'object') intervals.delete(handle.id);
+                else intervals.delete(handle);
+            },
             require: id => {
                 assert.equal(id, 'electron');
                 return { ipcRenderer: { invoke: async () => ({ ok: true }) } };
@@ -252,6 +264,9 @@ function testRendererPositioning() {
         };
         vm.runInNewContext(source, sandbox);
         sandbox.module.exports(labels, true);
+        if (buildCustomBody) {
+            return { button: document.getElementById('ag-hub-launcher-btn'), body, makeEl, intervals };
+        }
         return document.getElementById('ag-hub-launcher-btn');
     }
 
@@ -279,7 +294,7 @@ function testRendererPositioning() {
     assert.equal(fallbackBtn.style.height, '22px');
 
     // Antigravity 2.36.0 nested div/span topbar without data-testid or .agy-titlebar
-    const v236Btn = runInDom([], { short: '壁纸', open: '打开壁纸选择库', failure: '无法打开壁纸选择库。' }, (makeEl, body) => {
+    const { button: v236Btn } = runInDom([], { short: '壁纸', open: '打开壁纸选择库', failure: '无法打开壁纸选择库。' }, (makeEl, body) => {
         const topbar = makeEl('div', { _rect: { left: 0, right: 1280, top: 0, bottom: 34, width: 1280, height: 34 } });
         const addItem = (text, boxRect, spanRect) => {
             const box = makeEl('div', { _rect: boxRect, _color: 'rgb(204, 210, 224)', _fontSize: '12px' });
@@ -302,6 +317,51 @@ function testRendererPositioning() {
     assert.equal(v236Btn.style.left, '252px');
     assert.equal(v236Btn.style.top, '5px');
     assert.equal(v236Btn.style.height, '24px');
+
+    // Delayed mount recovery (> 6.2s): #root starts empty, then React hydrates topbar inside #root
+    let delayedRoot;
+    const delayed = runInDom([], { short: '壁纸', open: '打开壁纸选择库', failure: '无法打开壁纸选择库。' }, (makeEl, body) => {
+        delayedRoot = makeEl('div', { id: 'root', _rect: { left: 0, right: 1280, top: 0, bottom: 800, width: 1280, height: 800 } });
+        body.appendChild(delayedRoot);
+    });
+    assert.equal(delayed.button.style.left, '10px');
+    assert.equal(Array.from(delayed.intervals.values())[0]?.ms, 500);
+    {
+        const topbar = delayed.makeEl('div', { _rect: { left: 0, right: 1280, top: 0, bottom: 34, width: 1280, height: 34 } });
+        const winBox = delayed.makeEl('div', { _rect: { left: 200, right: 244, top: 5, bottom: 29, width: 44, height: 24 } });
+        const winSpan = delayed.makeEl('span', { textContent: '窗口', _rect: { left: 208, right: 236, top: 8, bottom: 26, width: 28, height: 18 } });
+        winBox.appendChild(winSpan);
+        topbar.appendChild(winBox);
+        delayedRoot.appendChild(topbar);
+        Array.from(delayed.intervals.values())[0].fn();
+    }
+    assert.equal(delayed.button.style.left, '252px');
+    assert.equal(delayed.button.style.top, '5px');
+    assert.equal(delayed.button.style.height, '24px');
+    assert.equal(Array.from(delayed.intervals.values())[0]?.ms, 2500);
+
+    // 350-node sidebar before topbar + -0.5px DPI subpixel negative top + Open Shadow DOM
+    const { button: shadowBtn } = runInDom([], { short: '壁纸', open: '打开壁纸选择库', failure: '无法打开壁纸选择库。' }, (makeEl, body) => {
+        const sidebar = makeEl('div', { _rect: { left: 0, right: 260, top: 32, bottom: 800, width: 260, height: 768 } });
+        for (let i = 0; i < 350; i++) {
+            sidebar.appendChild(makeEl('div', { textContent: '会话 ' + i, _rect: { left: 10, right: 240, top: 40 + (i % 10) * 30, bottom: 64 + (i % 10) * 30, width: 230, height: 24 } }));
+        }
+        body.appendChild(sidebar);
+
+        const shadowHost = makeEl('div', { _rect: { left: 0, right: 1280, top: 0, bottom: 34, width: 1280, height: 34 } });
+        const shadowRoot = { host: shadowHost, children: [] };
+        const topbar = makeEl('div', { _rect: { left: 0, right: 1280, top: 0, bottom: 34, width: 1280, height: 34 }, _root: shadowRoot });
+        const winBox = makeEl('div', { _rect: { left: 200, right: 244, top: -0.5, bottom: 23.5, width: 44, height: 24 }, _root: shadowRoot });
+        const winSpan = makeEl('span', { textContent: '窗口', _rect: { left: 208, right: 236, top: 2.5, bottom: 20.5, width: 28, height: 18 }, _root: shadowRoot });
+        winBox.appendChild(winSpan);
+        topbar.appendChild(winBox);
+        shadowRoot.children.push(topbar);
+        shadowHost.shadowRoot = shadowRoot;
+        body.appendChild(shadowHost);
+    });
+    assert.equal(shadowBtn.style.left, '252px');
+    assert.equal(shadowBtn.style.top, '2px');
+    assert.equal(shadowBtn.style.height, '24px');
 }
 
 async function testMainProcess() {
