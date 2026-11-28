@@ -1,5 +1,6 @@
 scratch/
 _temp_asar/
+_backup_before_*/
 node_modules/
 .DS_Store
 

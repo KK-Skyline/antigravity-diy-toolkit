@@ -1,6 +1,6 @@
 # AI Rules for Antigravity2-cn
 
-When working on this project (translating / localizing Antigravity to Chinese), you MUST follow these guidelines:
+When working on this project (Antigravity Chinese localization, themes, and Wallpaper Engine plugins), follow these guidelines alongside [AGENTS.md](AGENTS.md) (which defines post-update diagnostics, regression suites, and privacy boundaries):
 
 ## 1. Dictionary Consistency Check (Mandatory)
 Whenever you modify, add, or delete any translation keys in `dicts/` or `dicts_tw/`:
@@ -20,9 +20,10 @@ Whenever you modify, add, or delete any translation keys in `dicts/` or `dicts_t
   * 浏览器 -> 瀏覽器
   * 账户 -> 帳戶
   * 窗口 -> 視窗
-  * 插件 -> 外掛程式
+  * 插件 -> 外掛 / 外掛程式
   * 快捷键 -> 快速鍵
-  * 主题 -> 佈景主題
+  * 主题 -> 主題 / 佈景主題
+  * 壁纸 -> 桌布
   * 终端 -> 終端機
 
 ## 3. Do NOT Run Installer Scripts / localization_engine.js
