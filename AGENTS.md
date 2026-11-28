@@ -18,10 +18,12 @@ node tools/audit_harness_compat.mjs --cdp --json
      ```bash
      npm run test:dicts
      npm run test:plugin
+     npm run test:hub-launcher
      npm run test:fast-asar
      npm run test:maintenance
      npm run test:adapt
      npm run test:asar
+     node security_regression.js
      ```
   3. 重跑 `node tools/audit_harness_compat.mjs --json`，确认 `verdict` 变为 `COMPATIBLE` 且退出码为 `0` 后，再给出上述本机重注入命令。
 

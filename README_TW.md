@@ -5,10 +5,10 @@
 [簡體中文版說明 (README.md)](README.md)
 
 > **支援系統**：Windows & macOS（均附一鍵指令碼）  
-> **匹配版本**：已實測適配至 **Antigravity 2.35.0**（支援 2.34+ Shell/Sheet 佈局、內建瀏覽器三層視圖、BaseWindow 系統匣與開發人員工具、WSL 選單漢化）；其他版本以實際測試為準。  
+> **匹配版本**：已實測適配至 **Antigravity 2.36.0**（支援 2.34+–2.36+ Shell/Sheet 佈局、無 testid 新版頂欄「視窗」右側一鍵桌布按鈕、內建瀏覽器三層視圖、BaseWindow 系統匣與開發人員工具、WSL 選單中文化與 AI 更新自助修復）；其他版本以實際測試為準。  
 > **執行環境**：Node.js >=22.12.0；首次使用前執行 `npm ci --omit=dev` 安裝鎖定依賴。桌布素材處理的部分功能還需 Python 與 Wallpaper Engine。  
 > **中文化範圍**：軟體介面（含自動化、遠端/WSL、內建瀏覽器、擴充功能與底部終端機）、頂部系統功能表、工作列右鍵選單（含動態 WSL 項目）、設定面板與更新彈窗（2.34+ 載入頁為純圖示，自動跳過文字替換）。  
-> **注入原理**：記憶體增量改寫 `app.asar` 注入 `preload.js` 與主程序補丁（約 2 秒完成）；安裝前保留帶 SHA-256 校驗的版本化基線備份，恢復前會驗證備份。pointer 的元資料摘要可發現不一致，但不能證明官方簽章，也不能抵抗可同時改寫本地檔案的攻擊者。
+> **注入原理**：單遍掃描 + 記憶體增量改寫 `app.asar` 注入 `preload.js` 與主程序補丁（約 2 秒完成，預載入桌布 `dataUrl` 單源去重）；安裝前保留帶 SHA-256 校驗的外置版本化基線備份，恢復前會驗證備份。pointer 的元資料摘要可發現不一致，但不能證明官方簽章，也不能抵抗可同時改寫本地檔案的攻擊者。
 
 > [!WARNING]
 > **關於聊天歷史記錄/對話方塊內容被中文化的已知問題及匹配機制說明（開發者必讀）**：
@@ -37,8 +37,9 @@
 ## 📂 專案檔案結構
 - **`双击安装繁体中文.bat`** / **`.command`**：Windows / macOS 一鍵繁體中文化執行入口。
 - **`双击卸载还原官方英文.bat`** / **`.command`**：Windows / macOS 從已保存基線恢復英文；檔名不代表已驗證官方來源。
-- **`localization_engine.js`**：核心中文化邏輯，負責 app.asar 的解包、程式碼注入、重新打包以及 macOS 下的自動深度重新簽名。
-- **`dicts_tw/`**：中文化字典資料夾，內含按模組分類 of JSON 對照翻譯字典。
+- **`localization_engine.js`**：核心編排入口，負責 7 模組外掛載入、記憶體增量改寫 `app.asar`、版本化基線事務保護以及 macOS 下的自動深度重新簽名。
+- **`dicts_tw/`**：繁體中文化字典資料夾，內含按模組分類的 JSON 對照翻譯字典（與簡體詞庫 100% 鍵對齊）。
+- **`AGENTS.md`** / **`tools/audit_harness_compat.mjs`**：AI 更新後自助相容性診斷與只讀三模式沙箱核驗工具。
 
 ---
 
@@ -138,11 +139,10 @@ node localization_engine.js --tw --brand-title translated
 本引擎採用 **ASAR 包注入模式**，專為 **Antigravity 2.0+** 的 Electron 架構量身定制：
 1. **運行狀態檢查**：預設在 Antigravity 仍運行時停止；只有明確使用 `--close-app` 才嘗試關閉後操作。
 2. **版本化備份**：經使用者顯式確認來源後，操作前保存帶 SHA-256 元資料的基線包，恢復後仍保留備份。舊版 `.bak` 只有在兩份舊備份一致、可解析且使用者顯式確認後才會導入；這不保證官方來源。
-3. **精準注入**：
-   - 注入 `preload.js`：採用 WeakSet 記錄與 Shadow DOM 穿透，啟動高效的 `MutationObserver` 引擎，動態監測並將渲染層文字翻譯為繁體中文。
-   - 注入 `menu.js`：深度補丁系統級標題列選單。
-   - 注入 `tray.js`：中文化系統匣與右鍵通知狀態選單。
-   - 注入 `loadingOverlay.js`：注入極具極客風格的趣味載入語：「反重力引擎已啟動，正在努力擺脫地心引力...」。
+3. **精準模組化注入**：
+   - 注入 `preload.js`：按外掛層序注入失重壓克力/黑曜石藍主題、桌布與雨滴特效、頂欄「視窗」右側「桌布」膠囊入口，以及支援 WeakMap 防重入與 Shadow DOM 穿透的 `MutationObserver` 繁體翻譯引擎（嚴格跳過程式碼區塊、編輯器、終端機與內建瀏覽器）。
+   - 注入 `main.js`：按需掛載本機串流影片桌布服務（`agWallpaperVideo.js`）與桌布選擇庫啟動器（`agWallpaperHubLauncher.js`）。
+   - 注入 `menu.js` / `tray.js` / `updater.js` / `debugConsole.js`：中文化系統標題列選單（含 WSL 項目與桌布選擇庫入口）、BaseWindow 系統匣右鍵選單與更新彈窗，並解鎖開發人員工具（2.34+ 載入頁 `loadingOverlay.js` 為純 SVG 圖示，自動跳過文字替換）。
 
 ---
 
@@ -209,8 +209,14 @@ node localization_engine.js --tw --brand-title translated
   - **Windows**：請右鍵點擊 `双击安装繁体中文.bat`，選擇 **“以系統管理員身分執行”**。
   - **macOS**：若雙擊執行 `.command` 提示無法開啟或沒有執行權限，可在終端機中執行 `chmod +x *.command` 來授權。工具會嘗試 Ad-hoc 重新簽名；實際權限、簽章和啟動結果仍須在目標機器驗證。
 
-### 3）軟體官方更新後，中文化失效了怎麼辦？
-* 軟體升級可能覆蓋 `app.asar`。完全退出後，先核對新版 `app.asar` 的來源與雜湊，再執行 `node localization_engine.js --tw --confirm-unverified-baseline` 建立新版基線並同時安裝；未確認時不得直接雙擊重裝。
+### 3）軟體官方更新後，中文化或桌布消失了怎麼辦？（支援 AI 自助檢查與修復）
+* Google 升級 Antigravity 時會覆蓋 `app.asar`。本倉庫已內建只讀相容性核驗工具與根目錄 [AGENTS.md](AGENTS.md)，可直接交由 AI 助手自助診斷：
+  1. 以 Antigravity（或 Claude Code / Cursor / Codex）開啟本專案資料夾；
+  2. 直接對 AI 發送：
+     > `Antigravity 更新了，請依 AGENTS.md 檢查新版本相容性；若相容請給我重新注入指令，若有鉤子失效請先在本機修好並跑通回歸測試。`
+  3. AI 會自動執行只讀檢測（`npm run check:update` + `npm run audit:harness`）：
+     - **一般小版本更新（相容 `COMPATIBLE`）**：完全退出軟體並核對新版 `app.asar` 來源無誤後，執行一次 `node localization_engine.js --tw --wallpaper --confirm-unverified-baseline`（純繁體中文化則去掉 `--wallpaper`）即可約 2 秒完成基線建立與重新注入；
+     - **大版本變更介面殼層或鉤子**：AI 會依報錯錨點在本機自動修補外掛並跑通全套回歸測試（進階自迭代流程見 [docs/SELF_ITERATION_RUNBOOK.md](docs/SELF_ITERATION_RUNBOOK.md)）。
 
 ---
 
@@ -224,8 +230,8 @@ node localization_engine.js --tw --brand-title translated
 
 ## 🧩 外掛化架構與純換膚模式
 
-本專案已將繁簡中文化、DevTools、黑曜石藍、Wallpaper Engine、失重壓克力主題及雨滴特效拆分為 `plugins/*` 下的獨立外掛，由 `core/plugin_loader.js` 與 `core/injector.js` 統一編排：
-- **純換膚（不裝漢化）**：`node localization_engine.js --wallpaper --no-i18n`（或 `--only-skin`），僅注入桌布與主題，不注入中文翻譯；
+本專案已將繁簡中文化、DevTools、黑曜石藍、Wallpaper Engine、失重壓克力主題、雨滴特效及頂欄桌布選擇庫入口拆分為 `plugins/*` 下的 7 個獨立外掛，由 `core/plugin_loader.js` 與 `core/injector.js` 統一編排：
+- **純換膚（不裝漢化）**：`node localization_engine.js --wallpaper --no-i18n`（或 `--only-skin`；若用戶端正在執行可加上 `--close-app` 自動關閉並重開），僅注入桌布與主題，不注入中文翻譯；
 - **按外掛開關**：支援 `--enable <id,...>` / `--disable <id,...>`（可用外掛：`i18n-zh`、`devtools`、`theme-obsidian-blue`、`wallpaper-engine`、`theme-acrylic`、`fx-rain`、`wallpaper-hub-launcher`）；
 - **持久化外掛設定**：複製 `plugins.config.example.json` 為 `plugins.config.json`（已被 `.gitignore` 忽略），依需求修改各外掛開關與參數後，直接執行 `node localization_engine.js` 即可生效。命令列開關優先於設定檔：使用 `--wallpaper` 時會自動啟用 `wallpaper-hub-launcher`（如需關閉請加上 `--disable wallpaper-hub-launcher`）；不使用 `--wallpaper` 時可在 `plugins.config.json` 中單獨設為 `true` 啟用。
 - **桌布選擇庫入口**：`--wallpaper --only-skin`（`--no-i18n`）同樣會啟用入口，並在頂欄 `Window` 右側顯示英文 `Wallpaper` 按鈕及 `File` 下的 `Wallpaper Hub...` 選單項目；如需完全隱藏入口並保持 `dist/menu.js` 零更動，請加上 `--disable wallpaper-hub-launcher`。可在外掛設定中分別控制 `showTopLeftButton` 和 `showMenuItem`，或將 `openMode` 設為 `"window"` 在用戶端內開啟（若希望重新啟動用戶端後繼續保留網頁，請保持預設的 `"browser"` 系統瀏覽器模式）。
