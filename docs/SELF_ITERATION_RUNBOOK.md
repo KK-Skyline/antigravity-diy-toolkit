@@ -34,7 +34,7 @@ Antigravity 刚更新了，请按 AGENTS.md 和 docs/SELF_ITERATION_RUNBOOK.md �
 1. **本地路径默认脱敏**：面向 Agent/CI 的 `--json` 输出与异常消息默认将 `LOCALAPPDATA` / `APPDATA` / `os.tmpdir()` / `os.homedir()` 前缀替换为 `<LOCALAPPDATA>` / `<APPDATA>` / `<TMPDIR>` / `<HOME>`（仅 `--include-paths` 时保留原路径）。
 2. **子进程异常不透传命令行**：捕获 `execFileSync` 报错写入 JSON（如 `cdp.reason`、`sandboxModes[].error`）时只提取精简原因/退出码并过路径脱敏，严禁写入 `Command failed: <node> <tempWorktree>\...`。
 3. **公开 PR 零隐私自检门禁**：PR 标题、正文与 commit 信息发布前必须过脱敏正则检查，严禁出现 `C:\Users\`、`/Users/`、`/home/`、`AppData`、`Temp`、本机用户名、主机名、未脱敏 `asarPath`/`updateYmlPath`、原始 `cdp.reason` 与未经人工审阅的 `untranslatedCandidates`。
-4. **个人配置强制排除**：Step 4 提交前 `git diff --name-only` 排除清单必须覆盖 `wallpaper_config.json`、`CODEX_AUDIT_BRIEF.md`、`last_good_wallpaper.json`、`plugins.config.json` 及 `_backup_before_*`。
+4. **个人配置强制排除**：Step 4 提交前 `git diff --name-only` 排除清单必须覆盖 `wallpaper_config.json`、`last_good_wallpaper.json`、`plugins.config.json` 及 `_backup_before_*`。
 5. **CDP 采集宁缺毋滥**：UI 词条探针过滤必须拦截带后缀的文件名 token（如 `notes.txt (Edited)`）以及单引号/双引号/反引号包裹的片段。
 
 ### 1.5 未来升级定时巡检（`/automation`）
@@ -87,12 +87,13 @@ node tools/audit_harness_compat.mjs --cdp --json
 3. 跑通全部本地测试与 `node --check`：
    - `node tools/compare_dicts.js`
    - `node tools/plugin_architecture_regression.mjs`
+   - `node tools/wallpaper_hub_launcher_regression.mjs`
    - `node tools/fast_asar_regression.mjs`
    - `node tools/harness_maintenance_regression.mjs`
    - `node tools/adapt_2_34_regression.mjs`
    - `node asar_transaction_regression.mjs`
    - 先只读检查 `127.0.0.1:3210` 是否空闲（**绝不**杀运行中的 `wallpaper_hub_server.js`），空闲则跑 `node security_regression.js`。
-4. 逐文件显式 `git add <files>`（**严禁 `git add -A` 或 `git add .`**），并断言 `git diff --name-only origin/main..HEAD` 不包含 `wallpaper_config.json`、`CODEX_AUDIT_BRIEF.md`、`last_good_wallpaper.json`、`plugins.config.json` 与 `_backup_before_*`。
+4. 逐文件显式 `git add <files>`（**严禁 `git add -A` 或 `git add .`**），并断言 `git diff --name-only origin/main..HEAD` 不包含 `wallpaper_config.json`、`last_good_wallpaper.json`、`plugins.config.json` 与 `_backup_before_*`。
 
 ### Step 5 — 独立只读强模型 Code Review（强制 `Model: "pro"` + SHA 绑定 + Fail Closed）
 1. 调用 `invoke_subagent`，强制传入：
