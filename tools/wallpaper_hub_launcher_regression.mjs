@@ -141,13 +141,116 @@ function testInjection() {
     }
 
     const rendererSrc = fs.readFileSync(path.join(rootDir, 'plugins', launcher, 'renderer.js'), 'utf8');
-    assert.doesNotMatch(rendererSrc, /subtree:\s*true/);
+    assert.match(rendererSrc, /observer\.observe\(body,\s*\{\s*childList:\s*true,\s*subtree:\s*false\s*\}\)/);
+    assert.doesNotMatch(rendererSrc, /observer\.observe\(body,\s*\{[^}]*subtree:\s*true/);
     assert.match(rendererSrc, /catch\s*\(\s*error\s*\)\s*\{[\s\S]*?console\.error\(/);
+
+    const cssSrc = fs.readFileSync(path.join(rootDir, 'plugins', launcher, 'launcher.css'), 'utf8');
+    assert.doesNotMatch(cssSrc, /^\s*(?:top|height):[^;]*!important/m);
 
     for (const file of ['index.js', 'main.js', 'renderer.js', 'start-hub.js']) {
         const src = fs.readFileSync(path.join(rootDir, 'plugins', launcher, file), 'utf8');
         assert.doesNotMatch(src, /(?:[A-Z]:\\|\/Users\/|\/home\/|shell:\s*true)/i);
     }
+}
+
+function testRendererPositioning() {
+    const source = fs.readFileSync(path.join(rootDir, 'plugins', launcher, 'renderer.js'), 'utf8');
+    function runInDom(menuItems, labels) {
+        const makeEl = (tag, props = {}) => {
+            const el = {
+                tagName: tag.toUpperCase(),
+                id: '',
+                type: '',
+                className: '',
+                textContent: '',
+                title: '',
+                disabled: false,
+                isConnected: false,
+                offsetWidth: 58,
+                children: [],
+                attrs: {},
+                dataset: {},
+                style: { setProperty(k, v) { this[k] = v; } },
+                listeners: {},
+                setAttribute(k, v) { this.attrs[k] = String(v); },
+                removeAttribute(k) { delete this.attrs[k]; },
+                appendChild(child) { this.children.push(child); child.isConnected = true; return child; },
+                addEventListener(type, fn) { this.listeners[type] = fn; },
+                getBoundingClientRect() { return this._rect || { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 }; },
+                closest(sel) { return sel.includes('title-menu-bar') ? menuBar : null; },
+                ...props
+            };
+            return el;
+        };
+        const items = menuItems.map(item => makeEl('div', {
+            textContent: item.text,
+            _rect: item.rect,
+            _color: item.color || 'rgb(220, 226, 238)',
+            _fontSize: item.fontSize || '12px'
+        }));
+        const menuBar = makeEl('div', { id: 'title-menu-bar' });
+        const body = makeEl('body');
+        const document = {
+            documentElement: makeEl('html'),
+            body,
+            createElement: tag => makeEl(tag),
+            createElementNS: (_ns, tag) => makeEl(tag),
+            getElementById: id => body.children.find(c => c.id === id) || null,
+            addEventListener() {},
+            querySelector: sel => (sel.includes('title-menu-bar') ? menuBar : null),
+            querySelectorAll: sel => (sel.includes('title-menu-bar-item') ? items : [])
+        };
+        class MutationObserver { observe() {} disconnect() {} }
+        class ResizeObserver { observe() {} disconnect() {} }
+        const window = {
+            innerWidth: 1280,
+            addEventListener() {},
+            getComputedStyle: el => ({ color: el._color, fontSize: el._fontSize })
+        };
+        window.top = window;
+        const sandbox = {
+            module: {},
+            process,
+            window,
+            document,
+            MutationObserver,
+            ResizeObserver,
+            requestAnimationFrame: fn => { fn(); return 1; },
+            setTimeout: () => 0,
+            clearTimeout() {},
+            require: id => {
+                assert.equal(id, 'electron');
+                return { ipcRenderer: { invoke: async () => ({ ok: true }) } };
+            }
+        };
+        vm.runInNewContext(source, sandbox);
+        sandbox.module.exports(labels, true);
+        return document.getElementById('ag-hub-launcher-btn');
+    }
+
+    const cnBtn = runInDom([
+        { text: '文件', rect: { left: 90, right: 126, top: 4, bottom: 28, width: 36, height: 24 } },
+        { text: '视图', rect: { left: 130, right: 166, top: 4, bottom: 28, width: 36, height: 24 } },
+        { text: '窗口', rect: { left: 170, right: 206, top: 4, bottom: 28, width: 36, height: 24 } }
+    ], { short: '壁纸', open: '打开壁纸选择库', failure: '无法打开壁纸选择库。' });
+    assert.ok(cnBtn, 'launcher button must be mounted');
+    assert.ok(cnBtn.children.some(c => c.tagName === 'SVG'), 'button must contain svg');
+    const cnLabel = cnBtn.children.find(c => c.className === 'ag-hub-launcher-label');
+    assert.equal(cnLabel?.textContent, '壁纸');
+    assert.equal(cnBtn.style.left, '210px');
+    assert.equal(cnBtn.style.top, '4px');
+    assert.equal(cnBtn.style.height, '24px');
+
+    const fallbackBtn = runInDom([
+        { text: 'File', rect: { left: 84, right: 120, top: 5, bottom: 27, width: 36, height: 22 } },
+        { text: 'View', rect: { left: 124, right: 160, top: 5, bottom: 27, width: 36, height: 22 } }
+    ], { short: 'Wallpaper', open: 'Open Wallpaper Hub', failure: 'Could not open Wallpaper Hub.' });
+    const fallbackLabel = fallbackBtn.children.find(c => c.className === 'ag-hub-launcher-label');
+    assert.equal(fallbackLabel?.textContent, 'Wallpaper');
+    assert.equal(fallbackBtn.style.left, '164px');
+    assert.equal(fallbackBtn.style.top, '5px');
+    assert.equal(fallbackBtn.style.height, '22px');
 }
 
 async function testMainProcess() {
@@ -419,6 +522,7 @@ async function testCli() {
             const injectedConfig = parseInjectedConfig(launcherMain);
             const serialized = JSON.stringify(injectedConfig);
             if (localeMode === 'en') {
+                assert.ok(preload.includes('"short":"Wallpaper"'), 'en preload must include short Wallpaper label');
                 assert.ok(preload.includes('Open Wallpaper Hub'), 'en preload must include Open Wallpaper Hub');
                 assert.ok(preload.includes('Could not open Wallpaper Hub.'), 'en preload must include English failure');
                 assert.ok(!preload.includes('壁纸选择库'), 'en preload must not include zh-CN label');
@@ -427,11 +531,14 @@ async function testCli() {
                 assert.equal(injectedConfig.messages, undefined);
                 assert.doesNotMatch(serialized, /[\u4e00-\u9fff]/);
             } else if (localeMode === 'zh-CN') {
+                assert.ok(preload.includes('"short":"壁纸"'), 'zh-CN preload must include short 壁纸 label');
                 assert.equal(injectedConfig.title, 'Antigravity 壁纸选择库');
                 assert.ok(injectedConfig.messages.hubScriptMissing.includes('壁纸选择库'));
             } else if (localeMode === 'zh-TW') {
+                assert.ok(preload.includes('"short":"桌布"'), 'zh-TW preload must include short 桌布 label');
                 assert.ok(preload.includes('開啟桌布選擇庫'), 'zh-TW preload must include 開啟桌布選擇庫');
                 assert.ok(preload.includes('無法開啟桌布選擇庫。'), 'zh-TW preload must include 無法開啟桌布選擇庫。');
+                assert.ok(!preload.includes('"short":"壁纸"'), 'zh-TW preload must not include simplified 壁纸');
                 assert.equal(injectedConfig.title, 'Antigravity 桌布選擇庫');
                 assert.ok(!serialized.includes('壁纸'), 'zh-TW config must not contain simplified 壁纸');
                 assert.ok(!serialized.includes('文件'), 'zh-TW config must not contain simplified 文件');
@@ -461,6 +568,7 @@ async function testCli() {
 try {
     fs.mkdirSync(distDir);
     testInjection();
+    testRendererPositioning();
     await testMainProcess();
     await testCli();
     console.log('Wallpaper Hub launcher regression: PASS');
