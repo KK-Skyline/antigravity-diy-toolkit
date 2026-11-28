@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
-  "lastVerifiedVersion": "2.35.0",
-  "lastVerifiedDate": "2026-11-24",
+  "lastVerifiedVersion": "2.36.0",
+  "lastVerifiedDate": "2026-11-27",
   "changelogUrl": "https://antigravity.google/changelog",
   "hookAnchors": [
     { "id": "preload-exists", "file": "dist/preload.js", "plugin": "core", "required": true, "type": "exists" },
@@ -31,6 +31,12 @@
       "verifiedAt": "2026-11-24",
       "status": "compatible",
       "summary": "Verified all 6 plugin hooks, fast ASAR patcher, and preload dedup cleanly on 2.35.0"
+    },
+    {
+      "version": "2.36.0",
+      "verifiedAt": "2026-11-27",
+      "status": "adapted",
+      "summary": "Verified all 7 plugins, 2.36+ testid-free Window-adjacent Wallpaper Hub pill launcher, fast ASAR patcher, and 14 hook anchors on 2.36.0"
     }
   ]
 }

@@ -18,11 +18,13 @@ node tools/audit_harness_compat.mjs --cdp --json
      ```bash
      npm run test:dicts
      npm run test:plugin
+     npm run test:hub-launcher
      npm run test:fast-asar
      npm run test:maintenance
      npm run test:adapt
      npm run test:asar
      ```
+     （若本机 `127.0.0.1:3210` 未被后台运行的 Wallpaper Hub 占用，再额外运行 `npm run test:security`；切勿强杀正在运行的 `wallpaper_hub_server.js`。）
   3. 重跑 `node tools/audit_harness_compat.mjs --json`，确认 `verdict` 变为 `COMPATIBLE` 且退出码为 `0` 后，再给出上述本机重注入命令。
 
 ## 2. 硬性边界与隐私铁律

@@ -10,16 +10,17 @@
 
 ## 这是什么
 
-给 **Google Antigravity 2.0+（当前已实测适配至 2.35.0）** 用的中文汉化与换肤工具。通过向 `app.asar` 注入脚本与样式，实现简繁汉化、主题换肤和 Wallpaper Engine 壁纸背景，支持只换肤不汉化。
+给 **Google Antigravity 2.0+（当前已实测适配至 2.36.0）** 用的中文汉化、动态壁纸换肤与 AI 自愈工具。通过向 `app.asar` 增量注入脚本与样式，实现简繁汉化、双主题换肤、Wallpaper Engine 动态背景与顶栏一键选壁纸，支持只换肤不汉化。
 
-- **插件化结构**：汉化（`i18n-zh`）、DevTools（`devtools`）、蓝黑主题（`theme-obsidian-blue`）、Wallpaper Engine 壁纸（`wallpaper-engine`）、亚克力透明层（`theme-acrylic`）、雨滴画布（`fx-rain`）全部拆为 `plugins/*` 独立插件，可按需开关，也支持 `--only-skin` / `--no-i18n` 纯换肤模式。
-- **Wallpaper Engine 背景与本地选壁纸网页**：自动读取本地 Steam 创意工坊订阅的壁纸库（支持视频壁纸直放、场景壁纸提取高清图与雨滴粒子），配套本地网页（`http://localhost:3210`）浏览、搜索并调节透明度、模糊、亮度、对比度与饱和度。
+- **7 模块插件化结构**：简繁汉化（`i18n-zh`）、DevTools 解锁（`devtools`）、蓝黑深色主题（`theme-obsidian-blue`）、Wallpaper Engine 壁纸（`wallpaper-engine`）、亚克力透明层（`theme-acrylic`）、雨滴画布（`fx-rain`）与顶栏壁纸选择库入口（`wallpaper-hub-launcher`）全部拆为 `plugins/*` 独立插件，可按需开关，支持 `--only-skin` / `--no-i18n` 纯换肤模式。
+- **顶栏一键选壁纸与 Wallpaper Hub**：自动读取本地 Steam 创意工坊订阅壁纸（支持视频壁纸直放、场景壁纸提取高清图与雨滴粒子）；在客户端顶栏「窗口」右侧直接提供同高融合的「壁纸」胶囊按钮（兼顾「文件」菜单与 `Ctrl+Alt+W` / `Cmd+Alt+W` 快捷键，兼容 2.36+ 无 `testid` 顶栏），按需后台拉起并打开 `http://127.0.0.1:3210` 浏览、搜索并微调透明度、模糊、亮度、对比度与饱和度，跨客户端重启或升级后后台服务仍可保持运行。
 - **两套皮肤**：
-  - **亚克力透明主题**：从当前壁纸取主色，穿透 2.34+/2.35+ 的 Shell/Sheet 布局与内置浏览器视口（`data-has-browser-hole`），保留透明标题栏与侧栏层次；
+  - **亚克力透明主题**：从当前壁纸自动提取主色，穿透 2.34+–2.36+ 的 Shell/Sheet 布局与内置浏览器三层视口（`data-has-browser-hole`），保留透明标题栏与悬浮岛侧栏层次；
   - **蓝黑深色主题**：低对比度深蓝黑配色，可单独使用或与壁纸叠加。
-- **简繁中文汉化**：覆盖主界面、顶部菜单、系统托盘（含 WSL 项）、设置面板和更新弹窗；自动跳过代码块、编辑器、终端与内置浏览器区域。
-- **极速增量写入与基线备份**：内存增量改写 `app.asar`（只重打包 `dist/` 变更，单次写入约 2 秒），安装前保留带 SHA-256 校验的版本化基线备份，可随时恢复到已保存基线。
+- **简繁中文汉化**：覆盖主界面（含自动化、远程/WSL、内置浏览器、扩展市场与底部终端）、顶部菜单、系统托盘（含动态 WSL 项）、设置面板和更新弹窗；自动跳过代码块、编辑器、终端与内置浏览器区域。
+- **8× 极速内存增量写入与基线备份**：单遍扫描 + 内存直写 `dist/` 变更（单次写入约 2 秒，预加载壁纸 `dataUrl` 单源去重），安装前保留带 SHA-256 校验的外置版本化基线备份，可随时恢复到已保存基线。
   > 说明：基线 pointer 中的元数据摘要可用于发现文件不一致，但不能证明官方签名，也不能抵抗可同时改写本地文件的攻击者。
+- **更新后 AI 自助检查与自愈**：内置只读更新检测（`npm run check:update`）、14 锚点 + 三模式沙箱兼容审计（`npm run audit:harness`）与根目录 [AGENTS.md](AGENTS.md)，客户端升级覆盖 `app.asar` 后可直接让 AI 核验兼容性并一键恢复或自动修补钩子。
 
 ---
 
@@ -111,8 +112,9 @@ Google 更新 Antigravity 客户端时会覆盖 `app.asar`，导致之前的汉�
 ## 命令行参数与插件配置
 
 ```bash
-# 简体中文 + 壁纸换肤
+# 简体中文 + 壁纸换肤（默认要求已退出客户端；若客户端正在运行，加 --close-app 可自动关闭并重开）
 node localization_engine.js --wallpaper
+node localization_engine.js --wallpaper --close-app
 
 # 纯换肤，不装汉化（--only-skin 与 --no-i18n 等价）
 node localization_engine.js --wallpaper --only-skin
