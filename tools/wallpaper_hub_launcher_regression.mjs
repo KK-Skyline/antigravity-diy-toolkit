@@ -156,41 +156,67 @@ function testInjection() {
 
 function testRendererPositioning() {
     const source = fs.readFileSync(path.join(rootDir, 'plugins', launcher, 'renderer.js'), 'utf8');
-    function runInDom(menuItems, labels) {
+    function createDomEnv() {
         const makeEl = (tag, props = {}) => {
             const el = {
                 tagName: tag.toUpperCase(),
                 id: '',
                 type: '',
                 className: '',
-                textContent: '',
+                _textContent: undefined,
                 title: '',
                 disabled: false,
                 isConnected: false,
                 offsetWidth: 58,
+                parentElement: null,
                 children: [],
                 attrs: {},
                 dataset: {},
                 style: { setProperty(k, v) { this[k] = v; } },
                 listeners: {},
+                get textContent() {
+                    if (this._textContent !== undefined) return this._textContent;
+                    return this.children.map(c => c.textContent).join('');
+                },
+                set textContent(v) { this._textContent = v; },
                 setAttribute(k, v) { this.attrs[k] = String(v); },
                 removeAttribute(k) { delete this.attrs[k]; },
-                appendChild(child) { this.children.push(child); child.isConnected = true; return child; },
+                appendChild(child) {
+                    child.parentElement = this;
+                    this.children.push(child);
+                    child.isConnected = true;
+                    return child;
+                },
+                contains(target) {
+                    let cur = target;
+                    while (cur) {
+                        if (cur === this) return true;
+                        cur = cur.parentElement;
+                    }
+                    return false;
+                },
                 addEventListener(type, fn) { this.listeners[type] = fn; },
                 getBoundingClientRect() { return this._rect || { left: 0, right: 0, top: 0, bottom: 0, width: 0, height: 0 }; },
-                closest(sel) { return sel.includes('title-menu-bar') ? menuBar : null; },
+                closest() { return null; },
                 ...props
             };
             return el;
         };
+        return { makeEl };
+    }
+
+    function runInDom(menuItems, labels, buildCustomBody) {
+        const { makeEl } = createDomEnv();
         const items = menuItems.map(item => makeEl('div', {
             textContent: item.text,
             _rect: item.rect,
             _color: item.color || 'rgb(220, 226, 238)',
-            _fontSize: item.fontSize || '12px'
+            _fontSize: item.fontSize || '12px',
+            closest: sel => (sel.includes('title-menu-bar') ? menuBar : null)
         }));
         const menuBar = makeEl('div', { id: 'title-menu-bar' });
         const body = makeEl('body');
+        if (buildCustomBody) buildCustomBody(makeEl, body);
         const document = {
             documentElement: makeEl('html'),
             body,
@@ -198,8 +224,8 @@ function testRendererPositioning() {
             createElementNS: (_ns, tag) => makeEl(tag),
             getElementById: id => body.children.find(c => c.id === id) || null,
             addEventListener() {},
-            querySelector: sel => (sel.includes('title-menu-bar') ? menuBar : null),
-            querySelectorAll: sel => (sel.includes('title-menu-bar-item') ? items : [])
+            querySelector: sel => (!buildCustomBody && sel.includes('title-menu-bar') ? menuBar : null),
+            querySelectorAll: sel => (!buildCustomBody && sel.includes('title-menu-bar-item') ? items : [])
         };
         class MutationObserver { observe() {} disconnect() {} }
         class ResizeObserver { observe() {} disconnect() {} }
@@ -238,7 +264,7 @@ function testRendererPositioning() {
     assert.ok(cnBtn.children.some(c => c.tagName === 'SVG'), 'button must contain svg');
     const cnLabel = cnBtn.children.find(c => c.className === 'ag-hub-launcher-label');
     assert.equal(cnLabel?.textContent, '壁纸');
-    assert.equal(cnBtn.style.left, '210px');
+    assert.equal(cnBtn.style.left, '214px');
     assert.equal(cnBtn.style.top, '4px');
     assert.equal(cnBtn.style.height, '24px');
 
@@ -248,9 +274,34 @@ function testRendererPositioning() {
     ], { short: 'Wallpaper', open: 'Open Wallpaper Hub', failure: 'Could not open Wallpaper Hub.' });
     const fallbackLabel = fallbackBtn.children.find(c => c.className === 'ag-hub-launcher-label');
     assert.equal(fallbackLabel?.textContent, 'Wallpaper');
-    assert.equal(fallbackBtn.style.left, '164px');
+    assert.equal(fallbackBtn.style.left, '168px');
     assert.equal(fallbackBtn.style.top, '5px');
     assert.equal(fallbackBtn.style.height, '22px');
+
+    // Antigravity 2.36.0 nested div/span topbar without data-testid or .agy-titlebar
+    const v236Btn = runInDom([], { short: '壁纸', open: '打开壁纸选择库', failure: '无法打开壁纸选择库。' }, (makeEl, body) => {
+        const topbar = makeEl('div', { _rect: { left: 0, right: 1280, top: 0, bottom: 34, width: 1280, height: 34 } });
+        const addItem = (text, boxRect, spanRect) => {
+            const box = makeEl('div', { _rect: boxRect, _color: 'rgb(204, 210, 224)', _fontSize: '12px' });
+            const span = makeEl('span', { textContent: text, _rect: spanRect, _color: 'rgb(204, 210, 224)', _fontSize: '12px' });
+            box.appendChild(span);
+            topbar.appendChild(box);
+        };
+        addItem('Antigravity', { left: 10, right: 98, top: 5, bottom: 29, width: 88, height: 24 }, { left: 18, right: 90, top: 8, bottom: 26, width: 72, height: 18 });
+        addItem('工作区', { left: 102, right: 154, top: 5, bottom: 29, width: 52, height: 24 }, { left: 110, right: 146, top: 8, bottom: 26, width: 36, height: 18 });
+        addItem('视图', { left: 158, right: 196, top: 5, bottom: 29, width: 38, height: 24 }, { left: 166, right: 188, top: 8, bottom: 26, width: 22, height: 18 });
+        addItem('窗口', { left: 200, right: 244, top: 5, bottom: 29, width: 44, height: 24 }, { left: 208, right: 236, top: 8, bottom: 26, width: 28, height: 18 });
+        body.appendChild(topbar);
+
+        // Decoy chat container below top > 56 containing "窗口" must be pruned
+        const chatArea = makeEl('div', { _rect: { left: 0, right: 1280, top: 60, bottom: 800, width: 1280, height: 740 } });
+        const chatDecoy = makeEl('span', { textContent: '窗口', _rect: { left: 400, right: 440, top: 100, bottom: 120, width: 40, height: 20 } });
+        chatArea.appendChild(chatDecoy);
+        body.appendChild(chatArea);
+    });
+    assert.equal(v236Btn.style.left, '252px');
+    assert.equal(v236Btn.style.top, '5px');
+    assert.equal(v236Btn.style.height, '24px');
 }
 
 async function testMainProcess() {

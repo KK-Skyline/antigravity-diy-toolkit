@@ -6,12 +6,18 @@ module.exports = function mountLauncher(labels, showShortcut) {
     const isMac = process.platform === 'darwin';
     const MENUBAR_SELECTOR = '[data-testid="title-menu-bar"], .agy-titlebar';
     const MENU_ITEM_SELECTOR = '[data-testid="title-menu-bar-item"], [data-testid="title-menu-bar"] button, [data-testid="title-menu-bar"] [role="menuitem"], .agy-titlebar button, .agy-titlebar [role="menuitem"]';
+    const PRIMARY_ANCHOR_RE = /^(窗口|視窗|Window)$/i;
+    const SECONDARY_MENU_RE = /^(帮助|說明|Help|视图|檢視|View|工作区|工作區|Workspace|文件|檔案|File|编辑|編輯|Edit)$/i;
     const titlebarControls = '[data-testid*="sidebar-toggle"], header button, header a, [role="toolbar"] button, [class*="titlebar"] button';
     let button;
     let observedBody;
     let observedMenuBar;
     let toastTimer;
     let rafId = 0;
+
+    function normMenuText(str) {
+        return (str || '').replace(/\(&[a-z]\)|&/gi, '').replace(/\s+/g, ' ').trim();
+    }
 
     function showError(message) {
         let toast = document.getElementById('ag-hub-launcher-toast');
@@ -28,22 +34,107 @@ module.exports = function mountLauncher(labels, showShortcut) {
         toastTimer = setTimeout(() => toast.remove(), 4000);
     }
 
-    function findMenuAnchor() {
-        const items = Array.from(document.querySelectorAll(MENU_ITEM_SELECTOR));
-        const visible = [];
-        for (const el of items) {
-            if (el === button) continue;
-            const rect = el.getBoundingClientRect();
-            if (rect.width > 0 && rect.height > 0 && rect.top >= 0 && rect.bottom <= 48 && rect.left < window.innerWidth * 0.7) {
-                visible.push({ el, rect });
+    function collectTopBarCandidates() {
+        const candidates = new Set();
+        const selectorHits = new Set();
+        const add = el => {
+            if (!el || el === button || button?.contains?.(el)) return false;
+            candidates.add(el);
+            return true;
+        };
+
+        for (const el of document.querySelectorAll(MENU_ITEM_SELECTOR)) {
+            if (add(el)) selectorHits.add(el);
+        }
+
+        if (typeof document.elementsFromPoint === 'function') {
+            const maxX = Math.min(560, Math.floor(window.innerWidth * 0.65));
+            for (const y of [12, 18, 26]) {
+                for (let x = 16; x <= maxX; x += 24) {
+                    for (const el of document.elementsFromPoint(x, y)) add(el);
+                }
             }
         }
-        if (!visible.length) return null;
-        let match = visible.find(({ el }) => /^(窗口|視窗|Window)$/i.test((el.textContent || '').replace(/\(&[a-z]\)|&/gi, '').trim()));
-        if (!match) {
-            match = visible.reduce((best, cur) => (cur.rect.right > best.rect.right ? cur : best));
+
+        if (document.body) {
+            const stack = [document.body];
+            let visited = 0;
+            while (stack.length && visited < 250) {
+                const node = stack.pop();
+                if (!node || node === button || button?.contains?.(node)) continue;
+                visited++;
+                if (node !== document.body) {
+                    const r = node.getBoundingClientRect?.();
+                    if (r && r.height > 0 && r.top > 56) continue;
+                    if (r && r.width > 0 && r.width <= 200 && r.height >= 12 && r.height <= 44 &&
+                        r.top >= 0 && r.bottom <= 52 && r.left < window.innerWidth * 0.7) {
+                        candidates.add(node);
+                    }
+                }
+                const children = node.children;
+                if (children) {
+                    for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
+                }
+            }
         }
-        const menuBar = match.el.closest?.(MENUBAR_SELECTOR) || document.querySelector(MENUBAR_SELECTOR);
+
+        return { candidates, selectorHits };
+    }
+
+    function liftToMenuBox(el, targetText) {
+        let cur = el;
+        while (cur.parentElement && cur.parentElement !== document.body) {
+            const parent = cur.parentElement;
+            if (normMenuText(parent.textContent) !== targetText) break;
+            const pr = parent.getBoundingClientRect?.();
+            if (!pr || pr.width <= 0 || pr.width > 200 || pr.height > 44 || pr.top < 0 || pr.bottom > 52) break;
+            cur = parent;
+        }
+        return cur;
+    }
+
+    function findMenuAnchor() {
+        const { candidates, selectorHits } = collectTopBarCandidates();
+        const seen = new Set();
+        const visible = [];
+        for (const rawEl of candidates) {
+            const text = normMenuText(rawEl.textContent);
+            if (!text || text.length > 20) continue;
+            const el = liftToMenuBox(rawEl, text);
+            if (seen.has(el)) continue;
+            seen.add(el);
+            const rect = el.getBoundingClientRect?.();
+            if (!rect || rect.width <= 0 || rect.width > 200 || rect.height < 12 || rect.height > 44 ||
+                rect.top < 0 || rect.bottom > 52 || rect.left >= window.innerWidth * 0.7) {
+                continue;
+            }
+            visible.push({ el, rect, text, isSelectorHit: selectorHits.has(rawEl) || selectorHits.has(el) });
+        }
+        if (!visible.length) return null;
+
+        const pickRightmost = list => list.reduce((best, cur) => (cur.rect.right > best.rect.right ? cur : best));
+        const primary = visible.filter(item => PRIMARY_ANCHOR_RE.test(item.text));
+        const secondary = primary.length ? [] : visible.filter(item => SECONDARY_MENU_RE.test(item.text));
+        const fallback = (primary.length || secondary.length) ? [] : visible.filter(item => item.isSelectorHit);
+        const match = primary.length
+            ? pickRightmost(primary)
+            : secondary.length
+                ? pickRightmost(secondary)
+                : fallback.length
+                    ? pickRightmost(fallback)
+                    : null;
+        if (!match) return null;
+
+        let menuBar = match.el.closest?.(MENUBAR_SELECTOR);
+        if (!menuBar) {
+            let p = match.el.parentElement;
+            while (p && p !== document.body) {
+                const pr = p.getBoundingClientRect?.();
+                if (!pr || pr.top < 0 || pr.bottom > 56 || pr.height > 52) break;
+                menuBar = p;
+                p = p.parentElement;
+            }
+        }
         return { menuBar, anchor: match.el, rect: match.rect };
     }
 
@@ -54,7 +145,7 @@ module.exports = function mountLauncher(labels, showShortcut) {
             const h = rect.height >= 18 && rect.height <= 32 ? Math.round(rect.height) : 24;
             button.style.height = h + 'px';
             button.style.top = Math.max(2, Math.round(rect.top + (rect.height - h) / 2)) + 'px';
-            const rawLeft = Math.round(rect.right + 4);
+            const rawLeft = Math.round(rect.right + 8);
             const btnWidth = button.offsetWidth || 64;
             const maxLeft = Math.max(10, window.innerWidth - btnWidth - 140);
             button.style.left = Math.min(rawLeft, maxLeft) + 'px';
@@ -170,6 +261,6 @@ module.exports = function mountLauncher(labels, showShortcut) {
     document.addEventListener('DOMContentLoaded', ensureLauncherBtn);
     window.addEventListener('load', ensureLauncherBtn);
     window.addEventListener('resize', ensureLauncherBtn);
-    for (const ms of [150, 600, 2000, 5000]) setTimeout(ensureLauncherBtn, ms);
+    for (const ms of [150, 400, 1100, 3100, 6200]) setTimeout(ensureLauncherBtn, ms);
     ensureLauncherBtn();
 };
